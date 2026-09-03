@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A terminal prompt "> _" in green on near-black. Single platform
+     VectorDrawable, used as the launcher icon. No adaptive-icon layers,
+     no density-bucketed PNGs — one file, a few hundred bytes. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="#0B0B0B"
+        android:pathData="M0,0 h108 v108 h-108 z" />
+
+    <!-- chevron -->
+    <path
+        android:strokeColor="#33FF66"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M34,36 L54,54 L34,72" />
+
+    <!-- cursor underscore -->
+    <path
+        android:strokeColor="#33FF66"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:pathData="M60,72 L84,72" />
+</vector>

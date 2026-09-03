@@ -1,0 +1,11 @@
+# Chopper version catalog — deliberately almost empty.
+# The whole point of this project is: NO dependencies. Not Compose, not
+# AndroidX, not Hilt, not DataStore — nothing but the Kotlin stdlib (added
+# automatically by AGP 9's built-in Kotlin) and the Android platform APIs.
+# Core versions mirror the family (~/AndroidStudio_Projects/_skeleton).
+[versions]
+agp    = "9.2.1"
+kotlin = "2.3.21"
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
