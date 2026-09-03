@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A terminal prompt "> _" in green on near-black. Single platform
+<!-- A terminal prompt "> _" in light gray on near-black. Single platform
      VectorDrawable, used as the launcher icon. No adaptive-icon layers,
      no density-bucketed PNGs — one file, a few hundred bytes. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"

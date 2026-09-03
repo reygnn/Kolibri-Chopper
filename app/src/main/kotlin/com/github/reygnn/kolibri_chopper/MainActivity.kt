@@ -28,14 +28,20 @@ import java.util.Locale
 /**
  * The entire Kolibri Chopper: a text-only, terminal-styled launcher in one
  * file. Queries the launchable apps from [android.content.pm.PackageManager],
- * lists them in monospace green, filters as you type, launches on tap or Enter.
+ * lists them in monospace light gray, filters as you type, launches on tap/Enter.
  *
  * No AndroidX, no Compose, no ViewBinding, no persistence, no crash reporting —
  * everything a launcher does not strictly need has been chopped off.
  */
 class MainActivity : Activity() {
 
-    private data class AppEntry(val label: String, val component: ComponentName)
+    // labelLower is the case-folded label, precomputed once so the sort and the
+    // per-keystroke filter never re-lowercase (the label never changes).
+    private data class AppEntry(
+        val label: String,
+        val labelLower: String,
+        val component: ComponentName,
+    )
 
     // NB: not named `foreground` — that collides with View.foreground (a
     // Drawable) inside the apply{} blocks below and hides this Int.
@@ -60,8 +66,7 @@ class MainActivity : Activity() {
 
         // Results grow upward, sitting right above the command line.
         listView = ListView(this).apply {
-            divider = null
-            dividerHeight = 0
+            divider = null  // setDivider(null) already zeroes the divider height
             isVerticalScrollBarEnabled = false
             isStackFromBottom = true
             setOnItemClickListener { _, _, position, _ -> launch(shownApps[position]) }
@@ -111,8 +116,23 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        loadApps()
-        applyFilter(prompt.text?.toString().orEmpty())
+        refreshApps()
+    }
+
+    /**
+     * Load the launchable apps OFF the main thread — queryIntentActivities plus
+     * loadLabel() per app touch disk/IPC and would jank the home screen on every
+     * return. Swap the result in and re-apply the current filter on the UI thread.
+     * Reloaded on each resume so install/uninstall changes surface; latest wins.
+     */
+    private fun refreshApps() {
+        Thread {
+            val loaded = loadApps()
+            runOnUiThread {
+                allApps = loaded
+                applyFilter(prompt.text?.toString().orEmpty())
+            }
+        }.start()
     }
 
     /** HOME pressed while already home: reset to a clean prompt. */
@@ -123,17 +143,23 @@ class MainActivity : Activity() {
         hideKeyboard()
     }
 
-    private fun loadApps() {
+    private fun loadApps(): List<AppEntry> {
         val pm = packageManager
+        val self = packageName
         val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        allApps = pm.queryIntentActivities(query, 0)
+        return pm.queryIntentActivities(query, 0)
+            .asSequence()
+            .filter { it.activityInfo.packageName != self }  // don't list ourselves
             .map { ri ->
+                val label = ri.loadLabel(pm).toString()
                 AppEntry(
-                    label = ri.loadLabel(pm).toString(),
+                    label = label,
+                    labelLower = label.lowercase(Locale.getDefault()),
                     component = ComponentName(ri.activityInfo.packageName, ri.activityInfo.name),
                 )
             }
-            .sortedBy { it.label.lowercase(Locale.getDefault()) }
+            .sortedBy { it.labelLower }
+            .toList()
     }
 
     private fun applyFilter(raw: String) {
@@ -141,7 +167,7 @@ class MainActivity : Activity() {
         shownApps = if (needle.isEmpty()) {
             allApps
         } else {
-            allApps.filter { it.label.lowercase(Locale.getDefault()).contains(needle) }
+            allApps.filter { it.labelLower.contains(needle) }
         }
         adapter.notifyDataSetChanged()
     }
