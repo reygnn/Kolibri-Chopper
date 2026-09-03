@@ -14,7 +14,7 @@
 
     <!-- chevron -->
     <path
-        android:strokeColor="#33FF66"
+        android:strokeColor="#D4D4D4"
         android:strokeWidth="8"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
@@ -22,7 +22,7 @@
 
     <!-- cursor underscore -->
     <path
-        android:strokeColor="#33FF66"
+        android:strokeColor="#D4D4D4"
         android:strokeWidth="8"
         android:strokeLineCap="round"
         android:pathData="M60,72 L84,72" />

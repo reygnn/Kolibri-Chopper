@@ -37,8 +37,10 @@ class MainActivity : Activity() {
 
     private data class AppEntry(val label: String, val component: ComponentName)
 
-    private val green = 0xFF33FF66.toInt()
-    private val greenDim = 0xFF1F8A3C.toInt()
+    // NB: not named `foreground` — that collides with View.foreground (a
+    // Drawable) inside the apply{} blocks below and hides this Int.
+    private val fgColor = 0xFFD4D4D4.toInt()     // pleasant light gray
+    private val fgColorDim = 0xFF808080.toInt()  // dimmer gray, for the hint
 
     private var allApps: List<AppEntry> = emptyList()
     private var shownApps: List<AppEntry> = emptyList()
@@ -69,8 +71,8 @@ class MainActivity : Activity() {
         // The prompt: a bare monospace command line at the bottom.
         prompt = EditText(this).apply {
             hint = "> search"
-            setHintTextColor(greenDim)
-            setTextColor(green)
+            setHintTextColor(fgColorDim)
+            setTextColor(fgColor)
             typeface = Typeface.MONOSPACE
             textSize = 16f
             background = null
@@ -179,7 +181,7 @@ class MainActivity : Activity() {
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
             val tv = (convertView as? TextView) ?: TextView(this@MainActivity).apply {
                 typeface = Typeface.MONOSPACE
-                setTextColor(green)
+                setTextColor(fgColor)
                 textSize = 16f
                 gravity = Gravity.CENTER_VERTICAL
                 isSingleLine = true
