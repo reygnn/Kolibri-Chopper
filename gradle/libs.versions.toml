@@ -10,10 +10,14 @@ agp    = "9.4.0"
 kotlin = "2.3.21"
 # Test-only.
 junit  = "4.13.2"
+json   = "20240303"
 
 [libraries]
 # Test-only — JVM unit tests for the pure logic in LauncherLogic.kt.
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+# Test-only — the REAL org.json impl on the unit-test classpath, so the
+# ConfigJson round-trip runs on the JVM (android.jar ships only a throwing stub).
+json = { group = "org.json", name = "json", version.ref = "json" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

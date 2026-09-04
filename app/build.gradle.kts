@@ -49,4 +49,7 @@ android {
 // it lives on the unit-test classpath and never enters the shipped APK.
 dependencies {
     testImplementation(libs.junit)
+    // Real org.json on the unit-test classpath for the ConfigJson round-trip
+    // (the android.jar org.json is a throwing stub). Test-only — not in the APK.
+    testImplementation(libs.json)
 }

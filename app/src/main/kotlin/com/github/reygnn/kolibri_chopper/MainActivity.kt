@@ -32,8 +32,6 @@ import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
 import android.window.OnBackInvokedDispatcher
-import org.json.JSONArray
-import org.json.JSONObject
 import java.io.File
 import java.io.FileDescriptor
 import java.io.FileOutputStream
@@ -82,39 +80,6 @@ class MainActivity : Activity() {
         // full component keeps each launchable entry independent. Body val, so it
         // stays out of equals/hashCode/copy — the identity is still the component.
         override val key: String = component.flattenToString()
-    }
-
-    /**
-     * The whole editable state, mirroring chopper.json 1:1. It is the single
-     * source of truth for hidden/favorite membership: the filter and the adapter
-     * read it live, so a toggle only mutates this + saves + notifies — the loaded
-     * AppEntry list never has to be rebuilt. The flattened component string
-     * ("package/class", see AppEntry.key) is the key throughout, so apps that
-     * expose more than one launcher activity stay individually addressable.
-     */
-    private class ChopperConfig(
-        val hidden: MutableSet<String> = linkedSetOf(),
-        // A LinkedHashSet, not a List: favorites need BOTH insertion order (for the
-        // rank used when laying rows out) AND O(1) membership (getView tests it per
-        // visible row, applyFilter/orderWithFavorites/toggle test it too). A plain
-        // List gave order but O(n) contains; the linked set gives both, and it also
-        // makes a favorite inherently unique — toggling can never create a duplicate.
-        val favorites: MutableSet<String> = linkedSetOf(),
-        val names: MutableMap<String, String> = linkedMapOf(),
-    ) {
-        /**
-         * A copy for handing to the background loader. loadApps() only READS these
-         * collections; taking the copy on the main thread (where every mutation
-         * also happens) means the loader owns an isolated snapshot and can't race
-         * a concurrent rename/toggle — LinkedHashMap et al. aren't thread-safe, so
-         * a read during a structural write could otherwise throw. Values are
-         * immutable Strings, so copying the containers is enough.
-         */
-        fun snapshot() = ChopperConfig(
-            LinkedHashSet(hidden),
-            LinkedHashSet(favorites),
-            LinkedHashMap(names),
-        )
     }
 
     // NB: not named `foreground` — that collides with View.foreground (a
@@ -452,7 +417,7 @@ class MainActivity : Activity() {
             // ioExecutor and this write is serialized with every save. rotateBackup =
             // false: .bak IS the good copy — rotating the torn primary into it would
             // destroy the very backup we just read from.
-            writeConfigFile(serializeConfig(recovered), rotateBackup = false)
+            writeConfigFile(ConfigJson.serialize(recovered), rotateBackup = false)
             return recovered
         }
         return ChopperConfig()
@@ -465,23 +430,16 @@ class MainActivity : Activity() {
      */
     private fun parseConfig(file: File): ChopperConfig? {
         if (!file.isFile) return null
-        return try {
-            val j = JSONObject(file.readText())
-            val loaded = ChopperConfig()
-            j.optJSONArray("hidden")?.let {
-                for (i in 0 until it.length()) loaded.hidden += it.getString(i)
-            }
-            j.optJSONArray("favorites")?.let {
-                for (i in 0 until it.length()) loaded.favorites += it.getString(i)
-            }
-            j.optJSONObject("names")?.let { o ->
-                for (k in o.keys()) loaded.names[k] = o.getString(k)
-            }
-            loaded
+        val text = try {
+            file.readText()
         } catch (e: Exception) {
-            Log.w("Chopper", "config unparseable: ${file.path}", e)
-            null
+            Log.w("Chopper", "config unreadable: ${file.path}", e)
+            return null
         }
+        // ConfigJson owns the JSON parsing (and is unit-tested); it returns null,
+        // never throws, on malformed input — log here where the file path is known.
+        return ConfigJson.parse(text)
+            ?: run { Log.w("Chopper", "config unparseable: ${file.path}"); null }
     }
 
     /**
@@ -492,19 +450,8 @@ class MainActivity : Activity() {
      * keeps a last-known-good .bak mirror (see [writeConfigFile]).
      */
     private fun saveConfig() {
-        val payload = serializeConfig(cfg)
+        val payload = ConfigJson.serialize(cfg)
         submitIo { writeConfigFile(payload, rotateBackup = true) }
-    }
-
-    /** Serialize a config to the on-disk JSON shape. Pure: touches no shared state. */
-    private fun serializeConfig(config: ChopperConfig): String {
-        val names = JSONObject()
-        for ((k, v) in config.names) names.put(k, v)
-        return JSONObject().apply {
-            put("hidden", JSONArray(config.hidden.toList()))
-            put("favorites", JSONArray(config.favorites.toList()))
-            put("names", names)
-        }.toString(2)
     }
 
     /**
