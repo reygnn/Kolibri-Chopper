@@ -50,8 +50,10 @@ Compared to Kolibri Launcher, the Chopper drops **all** of it:
 - no Navigation / Fragments — one `Activity` (rename is a bare platform dialog)
 - no DataStore / Room / SharedPreferences — the small amount of state (hidden
   apps, favorites, custom names) is a single hand-rolled `chopper.json` in
-  `filesDir`, written atomically via temp-file + fsync + rename, mirrored to a
-  `.bak` it can recover from, and edited only through the in-app modes above
+  `filesDir`, written durably (temp-file + fsync + rename, then a directory
+  fsync so the rename itself survives power-loss, not just a crash); the previous
+  good version is rotated into a `.bak` that recovery falls back to and heals the
+  primary from on the next load; and edited only through the in-app modes above
 - no ACRA / Timber — `android.util.Log`
 - no ViewBinding / XML layouts — UI built in code
 
