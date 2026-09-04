@@ -26,6 +26,19 @@ a launcher does not strictly need and see how small the APK gets.
 - Long-press any row to set a custom name.
 - Registers as `HOME` + `LAUNCHER`, `singleTask`. That's it.
 
+## Which line?
+
+Two lines are maintained; pick whichever fits.
+
+- **0.2.x (this line)** — adds favorites, hidden apps and custom names, stored in
+  `chopper.json`. App enumeration is single-user only.
+- **0.1.x** — deliberately barebones and staying that way: no config, no
+  persistence, just list, filter and launch. It is also the only line that carries
+  the `LauncherApps` multi-user listing (work-profile, cloned and private-space
+  apps). Choose it from the
+  [Releases](https://github.com/reygnn/Kolibri-Chopper/releases) page (latest:
+  0.1.2) if you prefer the smaller, stateless launcher — or need cross-profile apps.
+
 ## What was chopped
 
 Compared to Kolibri Launcher, the Chopper drops **all** of it:
