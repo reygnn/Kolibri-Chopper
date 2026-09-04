@@ -57,12 +57,14 @@ Compared to Kolibri Launcher, the Chopper drops **all** of it:
 - no ACRA / Timber — `android.util.Log`
 - no ViewBinding / XML layouts — UI built in code
 
-The launcher is two small files: `MainActivity.kt` (the framework wiring) and
-`LauncherLogic.kt` (its pure decision logic — mode parsing, filtering, favorite
-ordering and reordering — split out so it is unit-tested on the plain JVM). The
-only *shipped* dependency is the Kotlin stdlib (added automatically by AGP's
-built-in Kotlin); JUnit is `testImplementation` only, so the release APK stays
-dependency-free and byte-for-byte the same size (R8 re-inlines the split).
+The launcher is a handful of small files: `MainActivity.kt` (the framework
+wiring) plus the pure, unit-tested logic split out beside it — `LauncherLogic.kt`
+(mode parsing, filtering, favorite ordering and reordering), `ChopperConfig.kt`
+(the config model) and `ConfigJson.kt` (the `chopper.json` round-trip). The only
+*shipped* dependencies are the Kotlin stdlib (added automatically by AGP's
+built-in Kotlin); JUnit and org.json are `testImplementation` only, so the
+release APK stays dependency-free and byte-for-byte the same size (R8 re-inlines
+the split).
 
 ## Build
 
