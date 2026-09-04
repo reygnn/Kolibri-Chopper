@@ -6,11 +6,24 @@ a launcher does not strictly need and see how small the APK gets.
 
 ## What it does
 
-- Lists every launchable app in monospace light gray (`#D4D4D4`) on black.
-- Enumerates apps across profiles via `LauncherApps` — work-profile, cloned and
-  private-space copies show up too and launch into their own profile. Work-profile
-  entries are badged (e.g. *Work Gmail*) so they aren't identical rows.
-- Type in the bottom command line to filter; tap or press **Enter** to launch.
+- Lists launchable apps in monospace light gray (`#D4D4D4`) on black.
+- Enumerates the current user's launchable apps via a `PackageManager`
+  MAIN/LAUNCHER query. Single-user only — no work-profile, cloned or
+  private-space handling.
+- The bottom command line drives everything; the leading character picks a mode:
+  - *(empty)* — your favorites (or the full drawer until you set some)
+  - `text` — substring search across **all** apps (hidden included)
+  - `*` — the full drawer: everything except hidden apps, **but a favorite is
+    always kept even when also hidden** (favoriting overrides hiding, so a starred
+    app is never trimmed from the default views)
+  - `#[text]` — edit hidden: tap a row to toggle `[x]`, saved immediately
+  - `![text]` — edit favorites: tap a row to toggle `[x]`, saved immediately
+  - `~` + **Enter** — reload the config from disk
+- Tap a row or press **Enter** to launch. **Enter** launches the row nearest the
+  command line (the bottom-most, since the list fills upward). This holds even on an
+  empty prompt — **Enter** with nothing typed launches your nearest favorite. That
+  is intentional: it makes the prompt a one-key quick-launch for your top favorite.
+- Long-press any row to set a custom name.
 - Registers as `HOME` + `LAUNCHER`, `singleTask`. That's it.
 
 ## What was chopped
@@ -19,8 +32,11 @@ Compared to Kolibri Launcher, the Chopper drops **all** of it:
 
 - no Compose, no Material, **no AndroidX at all** — platform widgets only
 - no Hilt / DI — a single `Activity` wires itself
-- no Navigation / Fragments — one screen
-- no DataStore / persistence — no favorites, no settings
+- no Navigation / Fragments — one `Activity` (rename is a bare platform dialog)
+- no DataStore / Room / SharedPreferences — the small amount of state (hidden
+  apps, favorites, custom names) is a single hand-rolled `chopper.json` in
+  `filesDir`, written atomically via temp-file + fsync + rename, mirrored to a
+  `.bak` it can recover from, and edited only through the in-app modes above
 - no ACRA / Timber — `android.util.Log`
 - no ViewBinding / XML layouts — UI built in code
 

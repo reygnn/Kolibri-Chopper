@@ -4,4 +4,9 @@
     <string name="hint_search">&gt; suche</string>
     <string name="toast_not_found">nicht gefunden: %1$s</string>
     <string name="toast_denied">verweigert: %1$s</string>
+    <!-- Gesprochene Zeilenbeschreibung für die Bearbeitungsmodi. %1$s = App-Name. -->
+    <string name="a11y_hidden_on">Ausgeblendet: %1$s. Zum Einblenden doppeltippen.</string>
+    <string name="a11y_hidden_off">Sichtbar: %1$s. Zum Ausblenden doppeltippen.</string>
+    <string name="a11y_fav_on">Favorit: %1$s. Zum Entfernen doppeltippen.</string>
+    <string name="a11y_fav_off">Kein Favorit: %1$s. Zum Hinzufügen doppeltippen.</string>
 </resources>
