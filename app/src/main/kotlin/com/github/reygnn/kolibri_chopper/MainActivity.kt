@@ -9,6 +9,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.os.Bundle
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
 import android.text.Editable
 import android.text.InputType
 import android.text.TextUtils
@@ -32,6 +35,7 @@ import android.window.OnBackInvokedDispatcher
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileDescriptor
 import java.io.FileOutputStream
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -441,9 +445,17 @@ class MainActivity : Activity() {
      */
     private fun loadConfig(): ChopperConfig {
         parseConfig(File(filesDir, CONFIG_FILE))?.let { return it }
-        parseConfig(File(filesDir, "$CONFIG_FILE.bak"))?.let {
+        parseConfig(File(filesDir, "$CONFIG_FILE.bak"))?.let { recovered ->
             Log.w("Chopper", "primary config unreadable — recovered from .bak")
-            return it
+            // Heal the primary now instead of waiting for the next toggle: rewrite the
+            // recovered config over the bad primary so later resumes stop hitting this
+            // path and we're never left running on a single copy. loadConfig() is only
+            // ever called inside refreshApps()'s submitIo block, so we're already on
+            // ioExecutor and this write is serialized with every save. rotateBackup =
+            // false: .bak IS the good copy — rotating the torn primary into it would
+            // destroy the very backup we just read from.
+            writeConfigFile(serializeConfig(recovered), rotateBackup = false)
+            return recovered
         }
         return ChopperConfig()
     }
@@ -475,62 +487,117 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Persist the current config. Writes the WHOLE file, so cfg must model every
-     * key it contains (it does: hidden/favorites/names — nothing else lives here).
-     * Write to a temp file, fsync its bytes to disk, THEN rename over the target.
-     *
-     * The fsync matters: rename is atomic for VISIBILITY (a reader sees the old file
-     * or the whole new one, never a splice), but not for DURABILITY. Without the
-     * fsync, the rename's metadata can reach disk before the temp file's contents do,
-     * so a crash/power-loss right after could publish an empty or truncated file —
-     * which loadConfig() would then silently discard as unparseable, wiping every
-     * favorite/hidden/name. Flushing the contents first closes that window. A crash
-     * before the rename still just leaves the previous good config in place, which is
-     * fine — the worst case is losing the single most recent toggle, not the file.
+     * Persist the current config to disk. Serializes the live [cfg] on the calling
+     * (main) thread — cfg is only ever mutated there, so the read is race-free and
+     * the result is an immutable snapshot — then hands the write to [ioExecutor] so a
+     * toggle/rename tap never blocks on disk. rotateBackup = true: a normal save
+     * keeps a last-known-good .bak mirror (see [writeConfigFile]).
      */
     private fun saveConfig() {
-        // Serialize cfg to text on the MAIN thread: cfg is only ever mutated here,
-        // so reading it now is race-free and the resulting String is an immutable
-        // snapshot. Only the actual file write is handed off — see below.
+        val payload = serializeConfig(cfg)
+        submitIo { writeConfigFile(payload, rotateBackup = true) }
+    }
+
+    /** Serialize a config to the on-disk JSON shape. Pure: touches no shared state. */
+    private fun serializeConfig(config: ChopperConfig): String {
         val names = JSONObject()
-        for ((k, v) in cfg.names) names.put(k, v)
-        val payload = JSONObject().apply {
-            put("hidden", JSONArray(cfg.hidden.toList()))
-            put("favorites", JSONArray(cfg.favorites.toList()))
+        for ((k, v) in config.names) names.put(k, v)
+        return JSONObject().apply {
+            put("hidden", JSONArray(config.hidden.toList()))
+            put("favorites", JSONArray(config.favorites.toList()))
             put("names", names)
         }.toString(2)
-        // Write off the main thread so a toggle/rename tap never blocks on disk.
-        // ioExecutor is single-threaded, so two rapid saves are serialized and can't
-        // race on the temp file; each save still writes the WHOLE file atomically.
-        submitIo {
-            val tmp = File(filesDir, "$CONFIG_FILE.tmp")
-            val dst = File(filesDir, CONFIG_FILE)
-            val bak = File(filesDir, "$CONFIG_FILE.bak")
-            try {
-                // Write and force the bytes down before the rename publishes them.
-                FileOutputStream(tmp).use { fos ->
+    }
+
+    /**
+     * Atomically publish [payload] as chopper.json, writing the WHOLE file each time.
+     * MUST run on [ioExecutor] (the sole disk-writing thread) so concurrent writes
+     * stay serialized on the temp file. Never throws — a failure degrades durability,
+     * not correctness, and is logged: a HOME app must not crash on a bad save.
+     *
+     * Sequence: temp-write + fsync-contents -> rotate -> publish + fsync-dir.
+     *   - fsync of the temp CONTENTS closes the window where the rename's metadata
+     *     could reach disk ahead of the bytes (which would publish a truncated file).
+     *   - the final fsync of the DIRECTORY makes the rename itself durable: rename is
+     *     atomic for visibility but not durability, so without it a power-cut can roll
+     *     the publish back to the previous file — a lost most-recent toggle, never
+     *     corruption.
+     *
+     * [rotateBackup] moves the current good primary into .bak (by rename, never an
+     * unsynced in-place copy that could tear it) before publishing. A normal save
+     * wants this. A HEAL after recovering from .bak must NOT: there the on-disk
+     * primary is the torn file we're replacing and .bak holds the ONLY good copy —
+     * rotating would overwrite that good .bak with garbage. The heal just replaces the
+     * bad primary and leaves .bak untouched, so both end up holding the config.
+     */
+    private fun writeConfigFile(payload: String, rotateBackup: Boolean) {
+        val tmp = File(filesDir, "$CONFIG_FILE.tmp")
+        val dst = File(filesDir, CONFIG_FILE)
+        val bak = File(filesDir, "$CONFIG_FILE.bak")
+        try {
+            // (1) Write to the temp file and force its bytes onto disk BEFORE anything
+            //     is published, so a rename can never expose contents that aren't there.
+            FileOutputStream(tmp).use { fos ->
+                fos.write(payload.toByteArray(Charsets.UTF_8))
+                fos.flush()
+                fos.fd.sync()
+            }
+
+            // (2) Rotate the current good primary into .bak by RENAME (atomic, can't
+            //     tear) — unless we're healing, where the on-disk primary is bad and
+            //     .bak is the good copy we must not clobber. We do NOT delete .bak
+            //     first: renaming onto it replaces it atomically on POSIX, and leaving
+            //     it keeps a good copy present at all times. On the first save dst
+            //     doesn't exist yet, so .bak appears from save #2 onward.
+            if (rotateBackup && dst.exists() && !dst.renameTo(bak)) {
+                Log.w("Chopper", "config .bak rotate failed (non-fatal)")
+            }
+
+            // (3) Publish the new primary. After a rotation dst is gone, so this
+            //     renames onto a FREE name — accepted by every filesystem, and it
+            //     sidesteps the old "refuse rename onto existing target" problem. The
+            //     in-place fallback only fires on an exotic FS that still refused; it
+            //     fsyncs (unlike the old copyTo), and .bak still holds a good config,
+            //     so even a torn in-place dst stays recoverable.
+            if (!tmp.renameTo(dst)) {
+                FileOutputStream(dst).use { fos ->
                     fos.write(payload.toByteArray(Charsets.UTF_8))
                     fos.flush()
-                    fos.fd.sync()  // contents durable on disk before we rename
+                    fos.fd.sync()
                 }
-                if (!tmp.renameTo(dst)) {
-                    // Some filesystems refuse rename onto an existing target.
-                    tmp.copyTo(dst, overwrite = true)
-                    tmp.delete()
-                }
-                // Keep a last-known-good mirror. We only ever write valid JSON, so the
-                // file just published is a good config; copy it to .bak so loadConfig()
-                // can recover if the primary is ever read back unreadable (a torn write
-                // on an odd filesystem, bit rot, a half-migrated file). Best-effort and
-                // done AFTER the durable publish above: a failure here changes nothing,
-                // the primary is already safely in place.
+                tmp.delete()
+            }
+
+            // (4) Make the renames themselves durable (see the method comment above).
+            fsyncDir(filesDir)
+        } catch (e: Exception) {
+            Log.w("Chopper", "config save failed", e)
+        }
+    }
+
+    /**
+     * fsync a *directory* so a preceding rename() is durable, not merely visible.
+     * The rename publishes atomically, but the directory entry it rewrites isn't on
+     * disk until the directory itself is synced — so a power-loss just after a rename
+     * can silently roll the publish back to the previous file. Platform syscalls only
+     * (no AndroidX): open the dir read-only, fsync the fd, close it. Best-effort — a
+     * failure here only weakens durability, it never corrupts, so it is logged, not
+     * thrown, exactly like the rest of the save path.
+     */
+    private fun fsyncDir(dir: File) {
+        var fd: FileDescriptor? = null
+        try {
+            fd = Os.open(dir.path, OsConstants.O_RDONLY, 0)
+            Os.fsync(fd)
+        } catch (e: ErrnoException) {
+            Log.w("Chopper", "dir fsync failed (non-fatal): ${dir.path}", e)
+        } finally {
+            if (fd != null) {
                 try {
-                    dst.copyTo(bak, overwrite = true)
-                } catch (e: Exception) {
-                    Log.w("Chopper", "config .bak refresh failed (non-fatal)", e)
+                    Os.close(fd)
+                } catch (e: ErrnoException) {
+                    // Nothing actionable at close time; the publish already happened.
                 }
-            } catch (e: Exception) {
-                Log.w("Chopper", "config save failed", e)
             }
         }
     }
