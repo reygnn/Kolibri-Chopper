@@ -9,4 +9,8 @@
     <string name="a11y_hidden_off">Sichtbar: %1$s. Zum Ausblenden doppeltippen.</string>
     <string name="a11y_fav_on">Favorit: %1$s. Zum Entfernen doppeltippen.</string>
     <string name="a11y_fav_off">Kein Favorit: %1$s. Zum Hinzufügen doppeltippen.</string>
+    <!-- Favoriten-Sortiermodus (die »-Aufnahme-Markierung wird nicht sinnvoll vorgelesen). -->
+    <string name="a11y_reorder_pick">%1$s. Zum Aufnehmen doppeltippen.</string>
+    <string name="a11y_reorder_picked">Aufgenommen: %1$s. Zum Abbrechen doppeltippen.</string>
+    <string name="a11y_reorder_drop">%1$s. Zum Hierher-Verschieben doppeltippen.</string>
 </resources>

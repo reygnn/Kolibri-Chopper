@@ -18,6 +18,8 @@ a launcher does not strictly need and see how small the APK gets.
     app is never trimmed from the default views)
   - `#[text]` — edit hidden: tap a row to toggle `[x]`, saved immediately
   - `![text]` — edit favorites: tap a row to toggle `[x]`, saved immediately
+  - `!!` — reorder favorites: tap a row to pick it up (marked `»`), tap another
+    row to drop it there; tap the picked row again to cancel. Saved immediately
   - `~` + **Enter** — reload the config from disk
 - Tap a row or press **Enter** to launch. **Enter** launches the row nearest the
   command line (the bottom-most, since the list fills upward). This holds even on an

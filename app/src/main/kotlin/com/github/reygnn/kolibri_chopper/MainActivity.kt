@@ -52,6 +52,8 @@ import java.util.concurrent.RejectedExecutionException
  *   *       normal: the full app drawer (every non-hidden app)
  *   #[text] edit hidden:    tap a row to toggle its [x], persisted immediately
  *   ![text] edit favorites: tap a row to toggle its [x], persisted immediately
+ *   !!      reorder favorites: tap a row to pick it up (marked »), tap another
+ *           row to drop it there; tap the picked row again to cancel
  *   ~       + Enter: reload chopper.json from disk (config is cached otherwise)
  * Long-press any row to set a custom name.
  */
@@ -78,7 +80,7 @@ class MainActivity : Activity() {
         val key: String = component.flattenToString()
     }
 
-    private enum class Mode { NORMAL, HIDDEN_EDIT, FAV_EDIT }
+    private enum class Mode { NORMAL, HIDDEN_EDIT, FAV_EDIT, FAV_REORDER }
 
     /**
      * The whole editable state, mirroring chopper.json 1:1. It is the single
@@ -124,6 +126,13 @@ class MainActivity : Activity() {
     // command forces a fresh read (see refreshApps / the Enter handler).
     private var configLoaded = false
     private var mode = Mode.NORMAL
+
+    // In FAV_REORDER: the component key of the favorite currently "picked up",
+    // or null when nothing is held. First tap picks a row up (marked » in
+    // getView), the next tap on another row drops it there; tapping the held row
+    // again cancels. Reset whenever the mode is left (see applyFilter), so a stale
+    // key from an old reorder session can never move the wrong row later.
+    private var reorderPick: String? = null
 
     private var allApps: List<AppEntry> = emptyList()
     private var shownApps: List<AppEntry> = emptyList()
@@ -190,6 +199,7 @@ class MainActivity : Activity() {
                     Mode.NORMAL      -> launch(entry)
                     Mode.HIDDEN_EDIT -> toggle(cfg.hidden, entry.key)
                     Mode.FAV_EDIT    -> toggle(cfg.favorites, entry.key)
+                    Mode.FAV_REORDER -> reorderTap(entry.key)
                 }
             }
             // Long-press: set/clear a custom name for the app (any mode).
@@ -539,6 +549,51 @@ class MainActivity : Activity() {
         adapter.notifyDataSetChanged()        // membership glyphs only; set unchanged
     }
 
+    /**
+     * One tap in FAV_REORDER. Nothing held yet -> pick this row up. The held row
+     * tapped again -> cancel. Any other row -> drop the held favorite there (see
+     * [moveFavorite]). A pick/cancel only flips the » marker, so notifyDataSetChanged
+     * is enough; a drop reorders the set, so it re-renders via applyFilter.
+     */
+    private fun reorderTap(key: String) {
+        when (reorderPick) {
+            null -> { reorderPick = key; adapter.notifyDataSetChanged() }
+            key  -> { reorderPick = null; adapter.notifyDataSetChanged() }
+            else -> moveFavorite(reorderPick!!, key)
+        }
+    }
+
+    /**
+     * Move the picked favorite so it takes [targetKey]'s current slot, then persist.
+     * cfg.favorites is a LinkedHashSet (insertion order == display rank, see
+     * ChopperConfig): copy it to a list, splice, and rebuild the set in the new
+     * order. Inserting AFTER the target when moving down / AT it when moving up lands
+     * the picked row exactly where the target sat, shifting the rows between by one.
+     *
+     * Bumps configEpoch (not loadGeneration) for the same reason toggle() does — a
+     * concurrent "~" reload must keep this live, reordered cfg rather than the
+     * pre-reorder disk copy. If either key has since vanished (a toggle/reload dropped
+     * a favorite mid-session) the move is abandoned cleanly, only clearing the marker.
+     */
+    private fun moveFavorite(pickedKey: String, targetKey: String) {
+        reorderPick = null
+        val order = cfg.favorites.toMutableList()
+        val from = order.indexOf(pickedKey)
+        val to = order.indexOf(targetKey)
+        if (from < 0 || to < 0 || from == to) {
+            applyFilter(prompt.text?.toString().orEmpty())  // just drop the » marker
+            return
+        }
+        order.removeAt(from)
+        val dest = order.indexOf(targetKey)
+        order.add(if (from < to) dest + 1 else dest, pickedKey)
+        cfg.favorites.clear()
+        cfg.favorites.addAll(order)
+        ++configEpoch
+        saveConfig()
+        applyFilter(prompt.text?.toString().orEmpty())  // re-render in the new order
+    }
+
     private fun promptRename(entry: AppEntry) {
         val key = entry.key
         val input = EditText(this).apply {
@@ -658,11 +713,21 @@ class MainActivity : Activity() {
     private fun applyFilter(raw: String) {
         val q = raw.trim()
         mode = when {
+            // "!!" before "!": the reorder sigil is a strict prefix of the edit one,
+            // so it has to be tested first or every reorder read as FAV_EDIT.
+            q.startsWith("!!") -> Mode.FAV_REORDER
             q.startsWith("#") -> Mode.HIDDEN_EDIT
             q.startsWith("!") -> Mode.FAV_EDIT
             else -> Mode.NORMAL
         }
+        // A pickup belongs to a single reorder session: drop it the moment we're no
+        // longer in FAV_REORDER, so nothing stale survives into another mode.
+        if (mode != Mode.FAV_REORDER) reorderPick = null
         shownApps = when (mode) {
+            // Reorder lists exactly the current favorites, in their stored order —
+            // any text after "!!" is ignored (filtering would scramble the positions
+            // the reorder acts on). Nothing to show when none are set.
+            Mode.FAV_REORDER -> favoritesInDisplayOrder()
             // Edit modes list EVERY app (so anything can be toggled), narrowed by
             // whatever follows the sigil. Membership shows as [x]/[ ] in getView.
             Mode.HIDDEN_EDIT, Mode.FAV_EDIT -> {
@@ -694,12 +759,17 @@ class MainActivity : Activity() {
      *  when none are configured OR none of the configured ones are currently
      *  launchable, so a fresh install — or one where every favorite has since been
      *  uninstalled — never leaves a blank home screen with no way back to the apps. */
-    private fun favoritesView(): List<AppEntry> {
+    private fun favoritesView(): List<AppEntry> =
+        favoritesInDisplayOrder().ifEmpty { orderWithFavorites(drawerApps()) }
+
+    /** The currently-launchable favorites, in their stored (config) order. Shared by
+     *  the empty-prompt favorites view and the "!!" reorder mode so both lay the
+     *  favorites out identically — the order the reorder mutates is the order shown. */
+    private fun favoritesInDisplayOrder(): List<AppEntry> {
         val rank = cfg.favorites.withIndex().associate { (i, p) -> p to i }
-        val favs = allApps
+        return allApps
             .filter { it.key in rank }
             .sortedBy { rank[it.key] }
-        return favs.ifEmpty { orderWithFavorites(drawerApps()) }
     }
 
     /** The set of apps eligible for the default views: everything not hidden, PLUS
@@ -777,6 +847,9 @@ class MainActivity : Activity() {
             tv.text = when (mode) {
                 Mode.HIDDEN_EDIT -> (if (key in cfg.hidden) "[x] " else "[ ] ") + entry.label
                 Mode.FAV_EDIT    -> (if (key in cfg.favorites) "[x] " else "[ ] ") + entry.label
+                // "» " marks the picked-up row; "  " keeps the others column-aligned
+                // (same two-cell width in the monospace face).
+                Mode.FAV_REORDER -> (if (key == reorderPick) "» " else "  ") + entry.label
                 Mode.NORMAL      -> entry.label
             }
             // Accessibility: the "[x]"/"[ ]" glyph reads as literal punctuation to a
@@ -791,6 +864,14 @@ class MainActivity : Activity() {
                 )
                 Mode.FAV_EDIT -> getString(
                     if (key in cfg.favorites) R.string.a11y_fav_on else R.string.a11y_fav_off,
+                    entry.label,
+                )
+                Mode.FAV_REORDER -> getString(
+                    when {
+                        reorderPick == null -> R.string.a11y_reorder_pick   // nothing held
+                        key == reorderPick  -> R.string.a11y_reorder_picked // this row held
+                        else                -> R.string.a11y_reorder_drop   // a drop target
+                    },
                     entry.label,
                 )
                 Mode.NORMAL -> null

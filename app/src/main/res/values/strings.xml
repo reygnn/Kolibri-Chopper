@@ -10,4 +10,8 @@
     <string name="a11y_hidden_off">Visible: %1$s. Double-tap to hide.</string>
     <string name="a11y_fav_on">Favorite: %1$s. Double-tap to remove.</string>
     <string name="a11y_fav_off">Not a favorite: %1$s. Double-tap to add.</string>
+    <!-- Reorder-favorites mode (the "»" grab marker doesn't read aloud sensibly). -->
+    <string name="a11y_reorder_pick">%1$s. Double-tap to pick up for reordering.</string>
+    <string name="a11y_reorder_picked">Picked up: %1$s. Double-tap to cancel.</string>
+    <string name="a11y_reorder_drop">%1$s. Double-tap to move the picked favorite here.</string>
 </resources>
