@@ -70,11 +70,20 @@ class LauncherLogicTest {
         assertEquals(listOf("a", "b", "c"), order)
     }
 
+    @Test fun `reorder on a single-element list is always a no-op`() {
+        assertNull(LauncherLogic.reorder(listOf("only"), "only", "only"))  // same row
+        assertNull(LauncherLogic.reorder(listOf("only"), "only", "x"))     // target absent
+    }
+
     // ---- search -------------------------------------------------------------
 
     @Test fun `search empty needle returns the list unchanged`() {
         val all = rows("a", "b")
         assertSame(all, LauncherLogic.search(all, ""))
+    }
+
+    @Test fun `search over an empty list is empty`() {
+        assertEquals(emptyList<String>(), LauncherLogic.search(emptyList<Row>(), "x").keys())
     }
 
     @Test fun `search matches a case-folded substring`() {

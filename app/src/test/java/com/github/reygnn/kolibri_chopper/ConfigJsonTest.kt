@@ -66,4 +66,31 @@ class ConfigJsonTest {
         assertTrue(parsed.hidden.isEmpty())
         assertTrue(parsed.names.isEmpty())
     }
+
+    @Test fun `round-trips names with quotes, backslashes and unicode`() {
+        // A custom name must survive serialization intact — otherwise a stray quote
+        // or backslash in a rename could corrupt the whole chopper.json.
+        val tricky = mapOf(
+            "com.a/.A" to "Wörk \"Gmail\"",
+            "com.b/.B" to "back\\slash\tand\nnewline",
+            "com.c/.C" to "絵文字 😀",
+        )
+        val parsed = ConfigJson.parse(ConfigJson.serialize(config(names = tricky)))!!
+        assertEquals(tricky, parsed.names)
+    }
+
+    @Test fun `truncated JSON returns null - the torn-write recovery trigger`() {
+        // A half-written primary (power-loss mid-save) is exactly what loadConfig()
+        // must reject so it falls back to .bak. Pin that these parse to null.
+        assertNull(ConfigJson.parse("{\"favorites\":[\"x\""))  // unterminated
+        assertNull(ConfigJson.parse("{"))                      // bare opening brace
+        assertNull(ConfigJson.parse("   "))                    // whitespace only
+    }
+
+    @Test fun `duplicate favorites in the file are de-duplicated, first position wins`() {
+        // A hand-edited or corrupted file could repeat a key; the favorites Set must
+        // collapse it to one entry without disturbing the surrounding rank order.
+        val parsed = ConfigJson.parse("""{"favorites":["x","y","x"]}""")!!
+        assertEquals(listOf("x", "y"), parsed.favorites.toList())
+    }
 }
