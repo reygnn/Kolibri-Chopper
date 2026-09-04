@@ -1,0 +1,93 @@
+package com.github.reygnn.kolibri_chopper
+
+import java.util.Locale
+
+/**
+ * The launcher's pure decision logic, lifted out of [MainActivity] so it can be
+ * unit-tested on the JVM without an Android runtime. Nothing here touches the
+ * framework, disk or any shared state: every function is a total, deterministic
+ * mapping from its arguments to a new list/value. The Activity keeps ownership of
+ * the UI wiring and the mutable config; it only delegates the "what to show / how
+ * to order / how to reorder" questions here.
+ *
+ * These are `internal`, not `private`, purely so the test source set can reach
+ * them — they add nothing to the shipped APK that the inlined originals didn't.
+ */
+
+/** The command-line mode, chosen by the prompt's leading sigil. Top-level so the
+ *  Activity, the adapter and the tests can all name it. */
+internal enum class Mode { NORMAL, HIDDEN_EDIT, FAV_EDIT, FAV_REORDER }
+
+/** The two fields the ordering/search logic needs from a row: its identity [key]
+ *  and its case-folded label. AppEntry implements this, and tests fake it with a
+ *  plain data class — so the logic never has to construct a real ComponentName. */
+internal interface Ordered {
+    val key: String
+    val labelLower: String
+}
+
+internal object LauncherLogic {
+
+    /**
+     * Map a trimmed prompt to its mode. "!!" MUST be tested before "!": the reorder
+     * sigil is a strict prefix of the edit one, so the order here is load-bearing.
+     */
+    fun parseMode(trimmed: String): Mode = when {
+        trimmed.startsWith("!!") -> Mode.FAV_REORDER
+        trimmed.startsWith("#") -> Mode.HIDDEN_EDIT
+        trimmed.startsWith("!") -> Mode.FAV_EDIT
+        else -> Mode.NORMAL
+    }
+
+    /**
+     * Substring search over [all] by case-folded label. Folds [needle] with
+     * Locale.ROOT (not the device locale) so the I/i mapping stays invariant — a
+     * Turkish/Azeri device must not turn "Instagram" into an unmatchable dotless ı.
+     * An empty needle returns [all] unchanged (the edit modes' "no filter" case).
+     */
+    fun <T : Ordered> search(all: List<T>, needle: String): List<T> {
+        val n = needle.lowercase(Locale.ROOT)
+        return if (n.isEmpty()) all else all.filter { it.labelLower.contains(n) }
+    }
+
+    /** The launchable favorites, in their stored ([favorites]) order. Entries not
+     *  present in [all] (a favorite whose app is uninstalled) drop out silently. */
+    fun <T : Ordered> favoritesInDisplayOrder(all: List<T>, favorites: Collection<String>): List<T> {
+        val rank = favorites.withIndex().associate { (i, p) -> p to i }
+        return all.filter { it.key in rank }.sortedBy { rank[it.key] }
+    }
+
+    /** The drawer set: everything not hidden, PLUS any favorite even when also
+     *  hidden. The single place "favoriting overrides hiding" lives, so the
+     *  empty-prompt view and the "*" drawer can never disagree. */
+    fun <T : Ordered> drawer(all: List<T>, hidden: Set<String>, favorites: Set<String>): List<T> =
+        all.filter { it.key !in hidden || it.key in favorites }
+
+    /** Non-favorites first (in their incoming order), favorites last in [favorites]
+     *  rank order — so with isStackFromBottom the config-first favorite sits nearest
+     *  the prompt. No favorites configured: [apps] is returned untouched. */
+    fun <T : Ordered> orderWithFavorites(apps: List<T>, favorites: Collection<String>): List<T> {
+        if (favorites.isEmpty()) return apps
+        val rank = favorites.withIndex().associate { (i, p) -> p to i }
+        val (favs, rest) = apps.partition { it.key in rank }
+        return rest + favs.sortedBy { rank[it.key] }
+    }
+
+    /**
+     * Move [pickedKey] onto [targetKey]'s slot within [order], returning the new
+     * order — or null when the move is a no-op or impossible (either key absent, or
+     * both the same). Inserting AFTER the target when moving down / AT it when moving
+     * up lands the picked key exactly where the target sat, shifting the rows between
+     * by one. Pure: [order] is not mutated.
+     */
+    fun reorder(order: List<String>, pickedKey: String, targetKey: String): List<String>? {
+        val from = order.indexOf(pickedKey)
+        val to = order.indexOf(targetKey)
+        if (from < 0 || to < 0 || from == to) return null
+        val out = order.toMutableList()
+        out.removeAt(from)
+        val dest = out.indexOf(targetKey)
+        out.add(if (from < to) dest + 1 else dest, pickedKey)
+        return out
+    }
+}

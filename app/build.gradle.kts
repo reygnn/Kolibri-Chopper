@@ -44,4 +44,9 @@ android {
     // The Chopper has no generated code and no resource-backed binding.
 }
 
-// No dependencies block. That is the feature.
+// No PRODUCTION dependencies — that is the feature; the release APK is Kotlin
+// stdlib + platform APIs only. The single entry below is testImplementation, so
+// it lives on the unit-test classpath and never enters the shipped APK.
+dependencies {
+    testImplementation(libs.junit)
+}

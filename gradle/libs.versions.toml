@@ -1,11 +1,19 @@
 # Chopper version catalog — deliberately almost empty.
-# The whole point of this project is: NO dependencies. Not Compose, not
-# AndroidX, not Hilt, not DataStore — nothing but the Kotlin stdlib (added
+# The whole point of this project is: NO dependencies IN THE APK. Not Compose,
+# not AndroidX, not Hilt, not DataStore — nothing but the Kotlin stdlib (added
 # automatically by AGP 9's built-in Kotlin) and the Android platform APIs.
+# The only entries below the core ones are test-only (testImplementation), so
+# they never enter the shipped release — the zero-dependency APK is untouched.
 # Core versions mirror the family (~/AndroidStudio_Projects/_skeleton).
 [versions]
 agp    = "9.4.0"
 kotlin = "2.3.21"
+# Test-only.
+junit  = "4.13.2"
+
+[libraries]
+# Test-only — JVM unit tests for the pure logic in LauncherLogic.kt.
+junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

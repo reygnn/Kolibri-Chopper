@@ -67,24 +67,22 @@ class MainActivity : Activity() {
     // per-keystroke filter never re-lowercase (the label never changes).
     private data class AppEntry(
         val label: String,
-        val labelLower: String,
+        override val labelLower: String,
         val component: ComponentName,
         // The app's own label as the system reports it — WITHOUT any custom name.
         // Kept so a rename can be applied (or cleared, falling back to this)
         // in-memory, re-baking only the affected component's rows instead of
         // re-enumerating every app just to rebuild one label.
         val systemLabel: String,
-    ) {
+    ) : Ordered {
         // The flattened "package/class" component string — the identity key for
         // hidden/favorites/names throughout. A package can expose several launcher
         // activities (e.g. "Google" and "Voice Search"), so keying on the package
         // alone would make one row's toggle/rename bleed onto its siblings; the
         // full component keeps each launchable entry independent. Body val, so it
         // stays out of equals/hashCode/copy — the identity is still the component.
-        val key: String = component.flattenToString()
+        override val key: String = component.flattenToString()
     }
-
-    private enum class Mode { NORMAL, HIDDEN_EDIT, FAV_EDIT, FAV_REORDER }
 
     /**
      * The whole editable state, mirroring chopper.json 1:1. It is the single
@@ -644,18 +642,15 @@ class MainActivity : Activity() {
      */
     private fun moveFavorite(pickedKey: String, targetKey: String) {
         reorderPick = null
-        val order = cfg.favorites.toMutableList()
-        val from = order.indexOf(pickedKey)
-        val to = order.indexOf(targetKey)
-        if (from < 0 || to < 0 || from == to) {
-            applyFilter(prompt.text?.toString().orEmpty())  // just drop the » marker
+        // A no-op or impossible move (either key vanished mid-session, or same row)
+        // returns null: just drop the » marker, don't touch the order.
+        val newOrder = LauncherLogic.reorder(cfg.favorites.toList(), pickedKey, targetKey)
+        if (newOrder == null) {
+            applyFilter(prompt.text?.toString().orEmpty())
             return
         }
-        order.removeAt(from)
-        val dest = order.indexOf(targetKey)
-        order.add(if (from < to) dest + 1 else dest, pickedKey)
         cfg.favorites.clear()
-        cfg.favorites.addAll(order)
+        cfg.favorites.addAll(newOrder)
         ++configEpoch
         saveConfig()
         applyFilter(prompt.text?.toString().orEmpty())  // re-render in the new order
@@ -779,14 +774,7 @@ class MainActivity : Activity() {
 
     private fun applyFilter(raw: String) {
         val q = raw.trim()
-        mode = when {
-            // "!!" before "!": the reorder sigil is a strict prefix of the edit one,
-            // so it has to be tested first or every reorder read as FAV_EDIT.
-            q.startsWith("!!") -> Mode.FAV_REORDER
-            q.startsWith("#") -> Mode.HIDDEN_EDIT
-            q.startsWith("!") -> Mode.FAV_EDIT
-            else -> Mode.NORMAL
-        }
+        mode = LauncherLogic.parseMode(q)
         // A pickup belongs to a single reorder session: drop it the moment we're no
         // longer in FAV_REORDER, so nothing stale survives into another mode.
         if (mode != Mode.FAV_REORDER) reorderPick = null
@@ -794,26 +782,21 @@ class MainActivity : Activity() {
             // Reorder lists exactly the current favorites, in their stored order —
             // any text after "!!" is ignored (filtering would scramble the positions
             // the reorder acts on). Nothing to show when none are set.
-            Mode.FAV_REORDER -> favoritesInDisplayOrder()
+            Mode.FAV_REORDER -> LauncherLogic.favoritesInDisplayOrder(allApps, cfg.favorites)
             // Edit modes list EVERY app (so anything can be toggled), narrowed by
             // whatever follows the sigil. Membership shows as [x]/[ ] in getView.
-            Mode.HIDDEN_EDIT, Mode.FAV_EDIT -> {
-                val needle = q.substring(1).trim().lowercase(Locale.ROOT)
-                if (needle.isEmpty()) allApps
-                else allApps.filter { it.labelLower.contains(needle) }
-            }
+            Mode.HIDDEN_EDIT, Mode.FAV_EDIT -> LauncherLogic.search(allApps, q.substring(1).trim())
             Mode.NORMAL -> when {
                 q.isEmpty() -> favoritesView()
-                // "*": the app drawer — everything except hidden, but a favorite
-                // is always kept (favoriting overrides hiding), see drawerApps().
-                q == "*" -> orderWithFavorites(drawerApps())
-                // Plain search spans ALL apps, so a hidden app is still reachable
-                // by typing its (possibly custom) name — hidden only trims the
-                // default views, it doesn't make an app unlaunchable.
-                else -> {
-                    val needle = q.lowercase(Locale.ROOT)
-                    allApps.filter { it.labelLower.contains(needle) }
-                }
+                // "*": the app drawer — everything except hidden, but a favorite is
+                // always kept (favoriting overrides hiding), see LauncherLogic.drawer.
+                q == "*" -> LauncherLogic.orderWithFavorites(
+                    LauncherLogic.drawer(allApps, cfg.hidden, cfg.favorites), cfg.favorites
+                )
+                // Plain search spans ALL apps, so a hidden app is still reachable by
+                // typing its (possibly custom) name — hidden only trims the default
+                // views, it doesn't make an app unlaunchable.
+                else -> LauncherLogic.search(allApps, q)
             }
         }
         adapter.notifyDataSetChanged()
@@ -827,39 +810,11 @@ class MainActivity : Activity() {
      *  launchable, so a fresh install — or one where every favorite has since been
      *  uninstalled — never leaves a blank home screen with no way back to the apps. */
     private fun favoritesView(): List<AppEntry> =
-        favoritesInDisplayOrder().ifEmpty { orderWithFavorites(drawerApps()) }
-
-    /** The currently-launchable favorites, in their stored (config) order. Shared by
-     *  the empty-prompt favorites view and the "!!" reorder mode so both lay the
-     *  favorites out identically — the order the reorder mutates is the order shown. */
-    private fun favoritesInDisplayOrder(): List<AppEntry> {
-        val rank = cfg.favorites.withIndex().associate { (i, p) -> p to i }
-        return allApps
-            .filter { it.key in rank }
-            .sortedBy { rank[it.key] }
-    }
-
-    /** The set of apps eligible for the default views: everything not hidden, PLUS
-     *  any favorite even when it is also hidden. This is the single place the
-     *  "favoriting overrides hiding" precedence lives, so the empty-prompt view and
-     *  the "*" drawer can never disagree about a favorite-and-hidden app. A plain
-     *  substring search still spans ALL apps (hidden included) as before — hiding
-     *  only trims these default views, it never makes an app unlaunchable. */
-    private fun drawerApps(): List<AppEntry> {
-        // cfg.favorites is a LinkedHashSet, so the membership test is already O(1) —
-        // no need to copy it into a throwaway HashSet first.
-        return allApps.filter { it.key !in cfg.hidden || it.key in cfg.favorites }
-    }
-
-    /** Non-favorites first (alphabetical), favorites last so they sit nearest the
-     *  prompt (isStackFromBottom). Add .reversed() to the fav sort if you'd rather
-     *  the config-first favorite be the closest to your thumb. */
-    private fun orderWithFavorites(apps: List<AppEntry>): List<AppEntry> {
-        if (cfg.favorites.isEmpty()) return apps
-        val rank = cfg.favorites.withIndex().associate { (i, p) -> p to i }
-        val (favs, rest) = apps.partition { it.key in rank }
-        return rest + favs.sortedBy { rank[it.key] }
-    }
+        LauncherLogic.favoritesInDisplayOrder(allApps, cfg.favorites).ifEmpty {
+            LauncherLogic.orderWithFavorites(
+                LauncherLogic.drawer(allApps, cfg.hidden, cfg.favorites), cfg.favorites
+            )
+        }
 
     private fun launch(entry: AppEntry) {
         // A launcher starts the app in its own task, not nested in this one.
