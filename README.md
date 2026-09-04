@@ -6,7 +6,10 @@ a launcher does not strictly need and see how small the APK gets.
 
 ## What it does
 
-- Lists every launchable app in monospace green on black.
+- Lists every launchable app in monospace light gray (`#D4D4D4`) on black.
+- Enumerates apps across profiles via `LauncherApps` — work-profile, cloned and
+  private-space copies show up too and launch into their own profile. Work-profile
+  entries are badged (e.g. *Work Gmail*) so they aren't identical rows.
 - Type in the bottom command line to filter; tap or press **Enter** to launch.
 - Registers as `HOME` + `LAUNCHER`, `singleTask`. That's it.
 

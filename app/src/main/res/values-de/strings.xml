@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- app_name stays "Chopper" (brand) — no override, falls back to default. -->
+    <string name="hint_search">&gt; suche</string>
+    <string name="toast_not_found">nicht gefunden: %1$s</string>
+    <string name="toast_denied">verweigert: %1$s</string>
+</resources>
