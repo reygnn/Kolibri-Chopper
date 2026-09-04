@@ -208,7 +208,7 @@ class MainActivity : Activity() {
             setHintTextColor(fgColorDim)
             setTextColor(fgColor)
             typeface = Typeface.MONOSPACE
-            textSize = 16f
+            textSize = 20f
             background = null
             isSingleLine = true
             inputType = InputType.TYPE_CLASS_TEXT or
@@ -763,7 +763,7 @@ class MainActivity : Activity() {
             val tv = (convertView as? TextView) ?: TextView(this@MainActivity).apply {
                 typeface = Typeface.MONOSPACE
                 setTextColor(fgColor)
-                textSize = 16f
+                textSize = 20f
                 gravity = Gravity.CENTER_VERTICAL
                 isSingleLine = true
                 ellipsize = TextUtils.TruncateAt.END
