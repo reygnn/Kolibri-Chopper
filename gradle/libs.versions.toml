@@ -4,7 +4,7 @@
 # automatically by AGP 9's built-in Kotlin) and the Android platform APIs.
 # Core versions mirror the family (~/AndroidStudio_Projects/_skeleton).
 [versions]
-agp    = "9.2.1"
+agp    = "9.4.0"
 kotlin = "2.3.21"
 
 [plugins]
