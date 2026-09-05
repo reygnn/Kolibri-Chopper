@@ -64,7 +64,8 @@ import java.util.concurrent.RejectedExecutionException
  *           row to drop it there; tap the picked row again to cancel
  *   ?       recents: the last-launched apps (in memory only, empty after restart)
  *   ~       + Enter: reload chopper.json from disk (config is cached otherwise)
- *   ~art    + Enter: cycle the 0.3 wallpaper backdrop (each motif, then off, wrap)
+ *   ~art    + Enter: cycle the 0.3 wallpaper backdrop (each motif, then off, wrap);
+ *           a toast names the pick. ~art <name> jumps to it, ~art off turns it off
  * Long-press any row to set a custom name and its tags.
  */
 class MainActivity : Activity() {
@@ -261,16 +262,36 @@ class MainActivity : Activity() {
                         prompt.setText("")
                         refreshApps(reloadConfig = true)
                     }
-                    // "~art": cycle the wallpaper motif (each motif, then off, wrap).
-                    // A one-shot command like "~", so it lives on Enter, not a live
-                    // sigil. Bumps configEpoch — like toggle() — so a "~" reload in
-                    // flight keeps this new choice instead of the pre-change disk copy.
-                    prompt.text?.toString()?.trim() == "~art" -> {
+                    // "~art" cycles the wallpaper motif; "~art <name>" jumps straight
+                    // to that motif ("~art off" turns it off). startsWith, not ==, so
+                    // an argument is accepted — the "~" reload above is matched first,
+                    // so it never reaches here. A toast names the selection (or reports
+                    // an unknown name), which is also what you type to load it directly.
+                    // Bumps configEpoch — like toggle() — so a "~" reload in flight
+                    // keeps this new choice instead of the pre-change disk copy.
+                    prompt.text?.toString()?.trim()?.startsWith("~art") == true -> {
+                        val arg = prompt.text?.toString()?.trim().orEmpty().removePrefix("~art")
                         prompt.setText("")
-                        cfg.wallpaper = LauncherLogic.nextWallpaper(cfg.wallpaper, AsciiArt.names)
-                        ++configEpoch
-                        saveConfig()
-                        applyWallpaper()
+                        val resolved = LauncherLogic.wallpaperCommand(arg, cfg.wallpaper, AsciiArt.names)
+                        if (resolved == null) {
+                            Toast.makeText(
+                                this@MainActivity, getString(R.string.toast_wallpaper_unknown, arg.trim()),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        } else {
+                            if (resolved != cfg.wallpaper) {
+                                cfg.wallpaper = resolved
+                                ++configEpoch
+                                saveConfig()
+                                applyWallpaper()
+                            }
+                            Toast.makeText(
+                                this@MainActivity,
+                                if (resolved.isEmpty()) getString(R.string.toast_wallpaper_off)
+                                else getString(R.string.toast_wallpaper, resolved),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
                     }
                     // In an edit mode Enter is a "done" gesture: clear the prompt
                     // back to normal instead of launching whatever sits at the top.

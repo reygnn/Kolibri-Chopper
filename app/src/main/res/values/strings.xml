@@ -7,6 +7,11 @@
     <string name="toast_not_found">not found: %1$s</string>
     <string name="toast_denied">denied: %1$s</string>
     <string name="toast_recents_empty">No recents yet — the list resets when the launcher restarts</string>
+    <!-- "~art" wallpaper feedback. %1$s is the motif name (also what you type to load
+         it directly, e.g. "~art xi"). -->
+    <string name="toast_wallpaper">Wallpaper: %1$s</string>
+    <string name="toast_wallpaper_off">Wallpaper: off</string>
+    <string name="toast_wallpaper_unknown">No wallpaper named “%1$s”</string>
     <!-- Spoken row descriptions for the edit modes (the "[x]"/"[ ]" glyph is not
          read aloud sensibly). %1$s is the app label. -->
     <string name="a11y_hidden_on">Hidden: %1$s. Double-tap to unhide.</string>

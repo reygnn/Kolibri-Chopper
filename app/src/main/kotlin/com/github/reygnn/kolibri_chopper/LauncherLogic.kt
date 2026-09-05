@@ -184,4 +184,22 @@ internal object LauncherLogic {
         val idx = cycle.indexOf(current)  // -1 when current is unknown/stale
         return cycle[(idx + 1) % cycle.size]
     }
+
+    /**
+     * Resolve a "~art" command to the wallpaper name it selects, or null when the
+     * argument names no known motif. [arg] is the text after "~art": empty cycles to
+     * the next motif (see [nextWallpaper]); "off" (any case) selects "" (off); a name
+     * matching one in [names] (case-insensitively) jumps straight to it, returning the
+     * canonical name; anything else is unknown → null, so the caller can report it
+     * instead of silently changing nothing. Pure. ("off" is reserved for the
+     * off-switch, so a motif may not be named "off".)
+     */
+    fun wallpaperCommand(arg: String, current: String, names: List<String>): String? {
+        val a = arg.trim()
+        return when {
+            a.isEmpty() -> nextWallpaper(current, names)
+            a.equals("off", ignoreCase = true) -> ""
+            else -> names.firstOrNull { it.equals(a, ignoreCase = true) }  // null if unknown
+        }
+    }
 }

@@ -29,6 +29,10 @@ a launcher does not strictly need and see how small the APK gets.
     memory only, so it starts empty on every cold start; **Enter** relaunches the
     most recent
   - `~` + **Enter** — reload the config from disk
+  - `~art` + **Enter** — cycle the ASCII wallpaper backdrop (each built-in motif,
+    then off, wrapping around); a toast names the pick. `~art <name>` jumps straight
+    to a motif and `~art off` turns it off — the toast name is exactly what you type
+    (e.g. `~art xi`)
 - Tap a row or press **Enter** to launch. **Enter** launches the row nearest the
   command line (the bottom-most, since the list fills upward). This holds even on an
   empty prompt — **Enter** with nothing typed launches your nearest favorite. That
@@ -40,9 +44,10 @@ a launcher does not strictly need and see how small the APK gets.
 
 Two lines are maintained; pick whichever fits.
 
-- **0.2.x (this line)** — adds favorites (with reordering), hidden apps, custom
-  names and per-app tags, stored in `chopper.json`. App enumeration is
-  single-user only.
+- **0.3.x (this line)** — everything 0.2 added (favorites with reordering, hidden
+  apps, custom names and per-app tags, stored in `chopper.json`) plus an optional
+  static ASCII **wallpaper backdrop** behind the list (`~art`, off by default,
+  drawn once with no render loop). App enumeration is single-user only.
 - **0.1.x** — deliberately barebones and staying that way: no config, no
   persistence, just list, filter and launch. It is also the only line that carries
   the `LauncherApps` multi-user listing (work-profile, cloned and private-space

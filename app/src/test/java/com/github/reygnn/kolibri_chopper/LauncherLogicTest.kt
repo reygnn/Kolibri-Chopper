@@ -369,4 +369,38 @@ class LauncherLogicTest {
         // rotating from it lands on the first real motif rather than getting stuck.
         assertEquals("xi", LauncherLogic.nextWallpaper("gone", listOf("xi", "wave")))
     }
+
+    // ---- wallpaperCommand ---------------------------------------------------
+
+    private val motifs = listOf("xi", "wave")
+
+    @Test fun `wallpaperCommand with no argument cycles`() {
+        // Empty arg delegates to nextWallpaper: off -> first motif, motif -> next.
+        assertEquals("xi", LauncherLogic.wallpaperCommand("", "", motifs))
+        assertEquals("wave", LauncherLogic.wallpaperCommand("", "xi", motifs))
+    }
+
+    @Test fun `wallpaperCommand off selects off, any case`() {
+        assertEquals("", LauncherLogic.wallpaperCommand("off", "xi", motifs))
+        assertEquals("", LauncherLogic.wallpaperCommand("OFF", "xi", motifs))
+    }
+
+    @Test fun `wallpaperCommand jumps straight to a named motif`() {
+        assertEquals("wave", LauncherLogic.wallpaperCommand("wave", "xi", motifs))
+        assertEquals("xi", LauncherLogic.wallpaperCommand("xi", "", motifs))
+    }
+
+    @Test fun `wallpaperCommand matches a name case-insensitively, returning the canonical form`() {
+        assertEquals("xi", LauncherLogic.wallpaperCommand("XI", "", motifs))
+    }
+
+    @Test fun `wallpaperCommand trims surrounding whitespace on the argument`() {
+        // The caller passes the text after "~art", e.g. " xi" from "~art xi".
+        assertEquals("xi", LauncherLogic.wallpaperCommand("  xi ", "", motifs))
+    }
+
+    @Test fun `wallpaperCommand returns null for an unknown name`() {
+        // The caller reports this rather than silently changing nothing.
+        assertNull(LauncherLogic.wallpaperCommand("nope", "xi", motifs))
+    }
 }
