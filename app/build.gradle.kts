@@ -12,8 +12,8 @@ android {
         applicationId = "com.github.reygnn.kolibri_chopper"
         minSdk = 36                 // Android 16 only — no compat shims
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.2.7"
+        versionCode = 12
+        versionName = "0.2.8"
     }
 
     buildTypes {

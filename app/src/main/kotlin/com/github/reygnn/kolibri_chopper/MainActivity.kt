@@ -109,6 +109,12 @@ class MainActivity : Activity() {
     // start; capped at RECENTS_LIMIT via LauncherLogic.pushRecent.
     private var recentKeys: List<String> = emptyList()
 
+    // One-shot guard for the "recents are empty because we cold-started" toast. The
+    // launcher process is killed under memory pressure (aggressively on low-RAM
+    // devices), which silently empties recentKeys; the hint stops that reading as
+    // lost data. Shown at most once per process — see applyFilter.
+    private var recentsEmptyHintShown = false
+
     // Three separate counters keep three separate concerns from stepping on each
     // other. All are written only on the main thread (single writer, so ++ stays
     // safe); @Volatile so the IO loader can read the latest value and bail early.
@@ -788,6 +794,16 @@ class MainActivity : Activity() {
                 // views, it doesn't make an app unlaunchable.
                 else -> LauncherLogic.search(allApps, q)
             }
+        }
+        // An empty "?" means nothing has been launched since this process started —
+        // i.e. we just cold-started (or it's a fresh install). The recents cache is
+        // in memory only and low-RAM devices kill the launcher process often, so warn
+        // once per process that the list resets on restart, lest an empty "?" look
+        // like the app forgot the user's recents. Guarded so the per-keystroke
+        // TextWatcher can't repeat it.
+        if (mode == Mode.RECENTS && recentKeys.isEmpty() && !recentsEmptyHintShown) {
+            recentsEmptyHintShown = true
+            Toast.makeText(this, getString(R.string.toast_recents_empty), Toast.LENGTH_LONG).show()
         }
         adapter.notifyDataSetChanged()
     }

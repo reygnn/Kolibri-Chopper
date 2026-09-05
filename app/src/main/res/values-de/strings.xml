@@ -4,6 +4,7 @@
     <string name="hint_search">&gt; suche</string>
     <string name="toast_not_found">nicht gefunden: %1$s</string>
     <string name="toast_denied">verweigert: %1$s</string>
+    <string name="toast_recents_empty">Noch keine zuletzt genutzten Apps — die Liste wird beim Neustart geleert</string>
     <!-- Gesprochene Zeilenbeschreibung für die Bearbeitungsmodi. %1$s = App-Name. -->
     <string name="a11y_hidden_on">Ausgeblendet: %1$s. Zum Einblenden doppeltippen.</string>
     <string name="a11y_hidden_off">Sichtbar: %1$s. Zum Ausblenden doppeltippen.</string>
