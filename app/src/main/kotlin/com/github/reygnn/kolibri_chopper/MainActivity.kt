@@ -35,7 +35,6 @@ import android.window.OnBackInvokedDispatcher
 import java.io.File
 import java.io.FileDescriptor
 import java.io.FileOutputStream
-import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 
@@ -495,12 +494,14 @@ class MainActivity : Activity() {
      *     the publish back to the previous file — a lost most-recent toggle, never
      *     corruption.
      *
-     * [rotateBackup] moves the current good primary into .bak (by rename, never an
-     * unsynced in-place copy that could tear it) before publishing. A normal save
-     * wants this. A HEAL after recovering from .bak must NOT: there the on-disk
-     * primary is the torn file we're replacing and .bak holds the ONLY good copy —
-     * rotating would overwrite that good .bak with garbage. The heal just replaces the
-     * bad primary and leaves .bak untouched, so both end up holding the config.
+     * [rotateBackup] moves the current primary into .bak (by rename, never an unsynced
+     * in-place copy that could tear it) before publishing — but only after re-parsing
+     * it, so a primary that silently went bad is never promoted over the good backup. A
+     * normal save wants this. A HEAL after recovering from .bak must NOT rotate at all:
+     * there the on-disk primary is the torn file we're replacing and .bak holds the
+     * ONLY good copy — rotating would overwrite that good .bak with garbage. The heal
+     * just replaces the bad primary and leaves .bak untouched, so both end up holding
+     * the config.
      */
     private fun writeConfigFile(payload: String, rotateBackup: Boolean) {
         val tmp = File(filesDir, "$CONFIG_FILE.tmp")
@@ -521,8 +522,22 @@ class MainActivity : Activity() {
             //     first: renaming onto it replaces it atomically on POSIX, and leaving
             //     it keeps a good copy present at all times. On the first save dst
             //     doesn't exist yet, so .bak appears from save #2 onward.
-            if (rotateBackup && dst.exists() && !dst.renameTo(bak)) {
-                Log.w("Chopper", "config .bak rotate failed (non-fatal)")
+            //
+            //     But rename promotes the primary UNVALIDATED, so first re-parse it and
+            //     skip the rotation if it no longer parses. Since a cold start serves
+            //     cfg from memory, a primary that silently went bad afterwards (bit rot,
+            //     or a torn in-place fallback at step 3 last time) would otherwise be
+            //     rotated straight onto .bak — destroying the last known-good backup.
+            //     This read is the only place that re-checks the on-disk primary; the
+            //     preserved .bak refreshes on the next save once the primary is good
+            //     again. One read+parse of a tiny file per save is a cheap insurance.
+            if (rotateBackup && dst.exists()) {
+                when {
+                    parseConfig(dst) == null ->
+                        Log.w("Chopper", "config primary invalid — keeping .bak, skipping rotate")
+                    !dst.renameTo(bak) ->
+                        Log.w("Chopper", "config .bak rotate failed (non-fatal)")
+                }
             }
 
             // (3) Publish the new primary. After a rotation dst is gone, so this
@@ -688,7 +703,7 @@ class MainActivity : Activity() {
             if (e.key != key) e
             else {
                 val base = cfg.names[key] ?: e.systemLabel
-                e.copy(label = base, labelLower = base.lowercase(Locale.ROOT))
+                e.copy(label = base, labelLower = LauncherLogic.foldLabel(base))
             }
         }.sortedBy { it.labelLower }
         applyFilter(prompt.text?.toString().orEmpty())
@@ -728,14 +743,12 @@ class MainActivity : Activity() {
                 // A custom name overrides the app's own label; otherwise the label
                 // as the system reports it. labelLower keys off the displayed text,
                 // so filtering matches what's on screen (a custom name included).
-                // Fold with Locale.ROOT (not the device locale): the query is folded
-                // the same way, and ROOT keeps the I/i mapping locale-invariant so a
-                // Turkish/Azeri device doesn't turn "Instagram" into an unmatchable
-                // dotless-ı and drop the row from a substring search.
+                // LauncherLogic.foldLabel folds with Locale.ROOT — the same fold
+                // search's needle uses — so the I/i mapping stays locale-invariant.
                 val base = cfg.names[key] ?: systemLabel
                 AppEntry(
                     label = base,
-                    labelLower = base.lowercase(Locale.ROOT),
+                    labelLower = LauncherLogic.foldLabel(base),
                     component = component,
                     systemLabel = systemLabel,
                 )

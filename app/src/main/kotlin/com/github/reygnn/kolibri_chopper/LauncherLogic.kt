@@ -41,13 +41,23 @@ internal object LauncherLogic {
     }
 
     /**
+     * Case-fold a display label to its search/sort key. Folds with Locale.ROOT (never
+     * the device locale) so the I/i mapping stays invariant — the exact same reason
+     * [search] folds its needle with ROOT. Both sides MUST use this: if a label were
+     * folded with the device locale, a Turkish/Azeri phone would key "Instagram" under
+     * a dotless ı and [search]'s ROOT-folded "i" needle would never match it. The one
+     * place a label becomes an [Ordered.labelLower].
+     */
+    fun foldLabel(label: String): String = label.lowercase(Locale.ROOT)
+
+    /**
      * Substring search over [all] by case-folded label. Folds [needle] with
      * Locale.ROOT (not the device locale) so the I/i mapping stays invariant — a
      * Turkish/Azeri device must not turn "Instagram" into an unmatchable dotless ı.
      * An empty needle returns [all] unchanged (the edit modes' "no filter" case).
      */
     fun <T : Ordered> search(all: List<T>, needle: String): List<T> {
-        val n = needle.lowercase(Locale.ROOT)
+        val n = foldLabel(needle)
         return if (n.isEmpty()) all else all.filter { it.labelLower.contains(n) }
     }
 

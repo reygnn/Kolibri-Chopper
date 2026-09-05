@@ -63,6 +63,12 @@ class LauncherLogicTest {
         assertEquals(listOf("a", "c", "b"), LauncherLogic.reorder(listOf("a", "b", "c"), "c", "b"))
     }
 
+    @Test fun `reorder moves a row onto the very first slot`() {
+        // Target at index 0 (an up-move inserting AT dest 0) — the boundary the other
+        // cases never exercise; a future off-by-one here would land the row at index 1.
+        assertEquals(listOf("c", "a", "b"), LauncherLogic.reorder(listOf("a", "b", "c"), "c", "a"))
+    }
+
     @Test fun `reorder returns null for a no-op or impossible move`() {
         assertNull(LauncherLogic.reorder(listOf("a", "b"), "a", "a"))   // same row
         assertNull(LauncherLogic.reorder(listOf("a", "b"), "x", "a"))   // picked absent
@@ -78,6 +84,39 @@ class LauncherLogicTest {
     @Test fun `reorder on a single-element list is always a no-op`() {
         assertNull(LauncherLogic.reorder(listOf("only"), "only", "only"))  // same row
         assertNull(LauncherLogic.reorder(listOf("only"), "only", "x"))     // target absent
+    }
+
+    // ---- foldLabel ----------------------------------------------------------
+
+    @Test fun `foldLabel lowercases with ROOT even under a Turkish default locale`() {
+        val original = Locale.getDefault()
+        try {
+            // Under tr-TR, "I".lowercase() gives the dotless "ı". foldLabel must pin
+            // Locale.ROOT so a label keeps the same "i" the search needle folds to —
+            // this is the LABEL side of the invariant (search covers the needle side).
+            Locale.setDefault(Locale.of("tr", "TR"))
+            assertEquals("instagram", LauncherLogic.foldLabel("Instagram"))
+            assertEquals("i", LauncherLogic.foldLabel("I"))
+        } finally {
+            Locale.setDefault(original)
+        }
+    }
+
+    @Test fun `search matches a foldLabel-built row under Turkish`() {
+        val original = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.of("tr", "TR"))
+            // End-to-end: the row's key is built exactly as MainActivity builds it (via
+            // foldLabel -> "instagram"), and search is given the raw "I". This guards
+            // search's OWN needle fold — a search that stopped folding would test
+            // "instagram".contains("I") and miss. (That the two sides fold the SAME way
+            // is guaranteed by both using foldLabel; the ROOT-pinning itself is pinned
+            // by the standalone foldLabel and search Turkish tests above/below.)
+            val all = listOf(Row("p/insta", LauncherLogic.foldLabel("Instagram")))
+            assertEquals(listOf("p/insta"), LauncherLogic.search(all, "I").keys())
+        } finally {
+            Locale.setDefault(original)
+        }
     }
 
     // ---- search -------------------------------------------------------------
@@ -179,6 +218,12 @@ class LauncherLogicTest {
         val current = listOf("a", "b")
         LauncherLogic.pushRecent(current, "c", 8)
         assertEquals(listOf("a", "b"), current)
+    }
+
+    @Test fun `pushRecent with a non-positive limit yields an empty list`() {
+        // Not reachable in production (RECENTS_LIMIT is 8), but pin take(0)'s behaviour
+        // so a bad limit degrades to "no recents" rather than throwing.
+        assertEquals(emptyList<String>(), LauncherLogic.pushRecent(listOf("a", "b"), "c", 0))
     }
 
     // ---- recentsInDisplayOrder ----------------------------------------------
