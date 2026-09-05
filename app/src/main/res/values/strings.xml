@@ -2,6 +2,8 @@
 <resources>
     <string name="app_name">Chopper</string>
     <string name="hint_search">&gt; search</string>
+    <string name="hint_rename_name">Name</string>
+    <string name="hint_rename_tags">Tags (comma-separated)</string>
     <string name="toast_not_found">not found: %1$s</string>
     <string name="toast_denied">denied: %1$s</string>
     <string name="toast_recents_empty">No recents yet — the list resets when the launcher restarts</string>

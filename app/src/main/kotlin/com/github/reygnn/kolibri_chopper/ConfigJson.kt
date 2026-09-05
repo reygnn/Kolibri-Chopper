@@ -17,10 +17,13 @@ internal object ConfigJson {
     fun serialize(config: ChopperConfig): String {
         val names = JSONObject()
         for ((k, v) in config.names) names.put(k, v)
+        val tags = JSONObject()
+        for ((k, v) in config.tags) tags.put(k, JSONArray(v))
         return JSONObject().apply {
             put("hidden", JSONArray(config.hidden.toList()))
             put("favorites", JSONArray(config.favorites.toList()))
             put("names", names)
+            put("tags", tags)
         }.toString(2)
     }
 
@@ -41,6 +44,20 @@ internal object ConfigJson {
         }
         j.optJSONObject("names")?.let { o ->
             for (k in o.keys()) loaded.names[k] = o.getString(k)
+        }
+        j.optJSONObject("tags")?.let { o ->
+            for (k in o.keys()) {
+                val arr = o.optJSONArray(k) ?: continue
+                val list = ArrayList<String>(arr.length())
+                // Fold on the way in too, not just when parseTags writes them: a
+                // hand-edited chopper.json with an unfolded "Work" would otherwise never
+                // match the ROOT-folded "#work" filter. Folding here makes "stored tags
+                // are canonical" hold for EVERY loaded file, not only app-written ones.
+                for (i in 0 until arr.length()) list += LauncherLogic.foldLabel(arr.getString(i))
+                // Drop an empty list rather than materializing a tagless key — keeps the
+                // in-memory shape identical to what serialize() would write next time.
+                if (list.isNotEmpty()) loaded.tags[k] = list
+            }
         }
         loaded
     } catch (e: Exception) {

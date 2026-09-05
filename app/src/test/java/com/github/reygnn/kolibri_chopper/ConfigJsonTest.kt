@@ -16,10 +16,12 @@ class ConfigJsonTest {
         hidden: List<String> = emptyList(),
         favorites: List<String> = emptyList(),
         names: Map<String, String> = emptyMap(),
+        tags: Map<String, List<String>> = emptyMap(),
     ) = ChopperConfig().apply {
         this.hidden += hidden
         this.favorites += favorites
         this.names.putAll(names)
+        for ((k, v) in tags) this.tags[k] = v.toMutableList()
     }
 
     @Test fun `round-trips a full config`() {
@@ -27,11 +29,13 @@ class ConfigJsonTest {
             hidden = listOf("com.a/.A", "com.b/.B"),
             favorites = listOf("com.f2/.F", "com.f1/.F", "com.f3/.F"),
             names = mapOf("com.a/.A" to "Alpha", "com.b/.B" to "Beta"),
+            tags = mapOf("com.a/.A" to listOf("work", "fun"), "com.b/.B" to listOf("games")),
         )
         val parsed = ConfigJson.parse(ConfigJson.serialize(original))!!
         assertEquals(original.hidden, parsed.hidden)
         assertEquals(original.favorites.toList(), parsed.favorites.toList())  // order = rank
         assertEquals(original.names, parsed.names)
+        assertEquals(original.tags, parsed.tags)
     }
 
     @Test fun `round-trips an empty config`() {
@@ -39,6 +43,35 @@ class ConfigJsonTest {
         assertTrue(parsed.hidden.isEmpty())
         assertTrue(parsed.favorites.isEmpty())
         assertTrue(parsed.names.isEmpty())
+        assertTrue(parsed.tags.isEmpty())
+    }
+
+    @Test fun `round-trips tags, preserving per-key order`() {
+        val original = config(tags = mapOf("com.a/.A" to listOf("z", "a", "m")))
+        val parsed = ConfigJson.parse(ConfigJson.serialize(original))!!
+        assertEquals(listOf("z", "a", "m"), parsed.tags["com.a/.A"])
+    }
+
+    @Test fun `an empty tag list is not materialized on parse`() {
+        // serialize never writes [], but a hand-edited file might; parse must drop it
+        // so the in-memory shape stays "key present only when it has tags".
+        val parsed = ConfigJson.parse("""{"tags":{"com.a/.A":[]}}""")!!
+        assertTrue(parsed.tags.isEmpty())
+    }
+
+    @Test fun `round-trips tags with unicode and special characters`() {
+        // Tags are stored ROOT-folded, so use already-lowercase values here to keep
+        // round-trip identity; the point is that unicode/punctuation survive org.json.
+        val original = config(tags = mapOf("com.a/.A" to listOf("café", "c/c++", "a b")))
+        val parsed = ConfigJson.parse(ConfigJson.serialize(original))!!
+        assertEquals(original.tags, parsed.tags)
+    }
+
+    @Test fun `parse folds tag case so a hand-edited tag still matches the filter`() {
+        // A hand-edited file with an unfolded "Work" must load as the canonical "work",
+        // or the ROOT-folded "#work" filter would silently miss it.
+        val parsed = ConfigJson.parse("""{"tags":{"com.a/.A":["Work","GAMES"]}}""")!!
+        assertEquals(listOf("work", "games"), parsed.tags["com.a/.A"])
     }
 
     @Test fun `preserves favorite order (the rank)`() {

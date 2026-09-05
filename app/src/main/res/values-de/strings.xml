@@ -2,6 +2,8 @@
 <resources>
     <!-- app_name stays "Chopper" (brand) — no override, falls back to default. -->
     <string name="hint_search">&gt; suche</string>
+    <string name="hint_rename_name">Name</string>
+    <string name="hint_rename_tags">Tags (kommagetrennt)</string>
     <string name="toast_not_found">nicht gefunden: %1$s</string>
     <string name="toast_denied">verweigert: %1$s</string>
     <string name="toast_recents_empty">Noch keine zuletzt genutzten Apps — die Liste wird beim Neustart geleert</string>

@@ -16,7 +16,7 @@ import java.util.Locale
 
 /** The command-line mode, chosen by the prompt's leading sigil. Top-level so the
  *  Activity, the adapter and the tests can all name it. */
-internal enum class Mode { NORMAL, HIDDEN_EDIT, FAV_EDIT, FAV_REORDER, RECENTS }
+internal enum class Mode { NORMAL, HIDDEN_EDIT, FAV_EDIT, FAV_REORDER, RECENTS, TAG_FILTER }
 
 /** The two fields the ordering/search logic needs from a row: its identity [key]
  *  and its case-folded label. AppEntry implements this, and tests fake it with a
@@ -37,6 +37,7 @@ internal object LauncherLogic {
         trimmed.startsWith("-") -> Mode.HIDDEN_EDIT
         trimmed.startsWith("!") -> Mode.FAV_EDIT
         trimmed.startsWith("?") -> Mode.RECENTS
+        trimmed.startsWith("#") -> Mode.TAG_FILTER
         else -> Mode.NORMAL
     }
 
@@ -122,5 +123,32 @@ internal object LauncherLogic {
     fun <T : Ordered> recentsInDisplayOrder(all: List<T>, recentKeys: List<String>): List<T> {
         val byKey = all.associateBy { it.key }
         return recentKeys.asReversed().mapNotNull { byKey[it] }
+    }
+
+    /**
+     * Normalize a comma-separated tag input into canonical stored tags: each piece is
+     * trimmed and [foldLabel]-folded (ROOT, so tag matching is case- and locale-
+     * invariant like search), empties are dropped, and duplicates collapse keeping
+     * first-seen order. The single place raw tag text becomes stored tags, so [tagged]
+     * can assume its stored tags are already folded and never re-normalize per filter.
+     */
+    fun parseTags(raw: String): List<String> =
+        raw.split(',').map { foldLabel(it.trim()) }.filter { it.isNotEmpty() }.distinct()
+
+    /**
+     * The "#" filter: apps carrying a tag that matches [needle]. [needle] is folded
+     * (ROOT) and prefix-matched against each app's tags, so "#wo" finds a "work"-tagged
+     * app; an empty needle (bare "#") returns every tagged app as an overview. [tags]
+     * is keyed by app key and assumed already folded (see [parseTags]). Apps keep their
+     * incoming order; a tag pointing at an app not in [all] (uninstalled) drops out
+     * because we iterate [all]. Hidden apps are intentionally NOT excluded — a tag is
+     * an explicit choice, the same way favoriting overrides hiding.
+     */
+    fun <T : Ordered> tagged(all: List<T>, tags: Map<String, List<String>>, needle: String): List<T> {
+        val n = foldLabel(needle)
+        return all.filter { entry ->
+            val ts = tags[entry.key].orEmpty()
+            if (n.isEmpty()) ts.isNotEmpty() else ts.any { it.startsWith(n) }
+        }
     }
 }

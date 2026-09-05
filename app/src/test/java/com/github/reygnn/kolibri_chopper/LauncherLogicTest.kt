@@ -33,11 +33,9 @@ class LauncherLogicTest {
         assertEquals(Mode.HIDDEN_EDIT, LauncherLogic.parseMode("-maps"))
     }
 
-    @Test fun `hash is no longer a sigil and stays NORMAL`() {
-        // hidden-edit moved off "#" (freeing it for a future hashtag mode); until then
-        // "#" is just plain text, so it must parse as a normal substring search.
-        assertEquals(Mode.NORMAL, LauncherLogic.parseMode("#"))
-        assertEquals(Mode.NORMAL, LauncherLogic.parseMode("#maps"))
+    @Test fun `hash is tag-filter`() {
+        assertEquals(Mode.TAG_FILTER, LauncherLogic.parseMode("#"))
+        assertEquals(Mode.TAG_FILTER, LauncherLogic.parseMode("#work"))
     }
 
     @Test fun `single bang is fav-edit`() {
@@ -251,5 +249,62 @@ class LauncherLogicTest {
 
     @Test fun `recentsInDisplayOrder with no recents is empty`() {
         assertEquals(emptyList<String>(), LauncherLogic.recentsInDisplayOrder(rows("a", "b"), emptyList()).keys())
+    }
+
+    // ---- parseTags ----------------------------------------------------------
+
+    @Test fun `parseTags folds, trims and drops empty pieces`() {
+        assertEquals(listOf("work", "games"), LauncherLogic.parseTags("  Work , GAMES "))
+    }
+
+    @Test fun `parseTags de-duplicates keeping first-seen order`() {
+        // "Work" and "work" fold to the same tag; the trailing empty piece is dropped.
+        assertEquals(listOf("work", "fun"), LauncherLogic.parseTags("Work, fun, work, "))
+    }
+
+    @Test fun `parseTags on blank input is empty`() {
+        assertEquals(emptyList<String>(), LauncherLogic.parseTags("   "))
+        assertEquals(emptyList<String>(), LauncherLogic.parseTags(",, ,"))
+    }
+
+    // ---- tagged -------------------------------------------------------------
+
+    private val taggedFixture = mapOf(
+        "a" to listOf("work"),
+        "b" to listOf("games", "fun"),
+        "c" to emptyList(),                 // present but untagged
+    )
+
+    @Test fun `tagged with an empty needle lists every tagged app`() {
+        // c has no tags, so it drops out; a and b keep their incoming order.
+        val result = LauncherLogic.tagged(rows("a", "b", "c"), taggedFixture, "")
+        assertEquals(listOf("a", "b"), result.keys())
+    }
+
+    @Test fun `tagged prefix-matches a tag`() {
+        assertEquals(listOf("b"), LauncherLogic.tagged(rows("a", "b", "c"), taggedFixture, "ga").keys())
+        assertEquals(listOf("a"), LauncherLogic.tagged(rows("a", "b", "c"), taggedFixture, "work").keys())
+    }
+
+    @Test fun `tagged folds the needle with ROOT`() {
+        // "WORK" must still match the stored "work" tag.
+        assertEquals(listOf("a"), LauncherLogic.tagged(rows("a", "b", "c"), taggedFixture, "WORK").keys())
+    }
+
+    @Test fun `tagged returns empty when nothing matches`() {
+        assertEquals(emptyList<String>(), LauncherLogic.tagged(rows("a", "b", "c"), taggedFixture, "zzz").keys())
+    }
+
+    @Test fun `tagged drops a tag pointing at an uninstalled app`() {
+        // "gone" is tagged but not in the app list, so it never appears.
+        val tags = mapOf("gone" to listOf("work"), "a" to listOf("work"))
+        assertEquals(listOf("a"), LauncherLogic.tagged(rows("a", "b"), tags, "work").keys())
+    }
+
+    @Test fun `tagged prefix-match distinguishes overlapping tags`() {
+        val tags = mapOf("a" to listOf("work"), "b" to listOf("workout"))
+        // "work" is a prefix of both -> both match; "worko" only prefixes "workout".
+        assertEquals(listOf("a", "b"), LauncherLogic.tagged(rows("a", "b"), tags, "work").keys())
+        assertEquals(listOf("b"), LauncherLogic.tagged(rows("a", "b"), tags, "worko").keys())
     }
 }

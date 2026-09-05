@@ -20,6 +20,10 @@ internal class ChopperConfig(
     // makes a favorite inherently unique — toggling can never create a duplicate.
     val favorites: MutableSet<String> = linkedSetOf(),
     val names: MutableMap<String, String> = linkedMapOf(),
+    // Per-app tags for the "#" filter. Values are canonical (ROOT-folded, deduped,
+    // see LauncherLogic.parseTags), ordered first-entered. Stored in chopper.json like
+    // names; a key with no tags is dropped rather than persisting an empty list.
+    val tags: MutableMap<String, MutableList<String>> = linkedMapOf(),
 ) {
     /**
      * A copy for handing to the background loader. loadApps() only READS these
@@ -33,5 +37,11 @@ internal class ChopperConfig(
         LinkedHashSet(hidden),
         LinkedHashSet(favorites),
         LinkedHashMap(names),
+        // Deep-copy the tag lists too — a shallow map copy would still share the inner
+        // MutableLists with the live cfg, reopening the very cross-thread mutation the
+        // snapshot exists to prevent.
+        LinkedHashMap<String, MutableList<String>>().also { c ->
+            for ((k, v) in tags) c[k] = ArrayList(v)
+        },
     )
 }

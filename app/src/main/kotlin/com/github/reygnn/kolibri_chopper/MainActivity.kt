@@ -51,13 +51,15 @@ import java.util.concurrent.RejectedExecutionException
  *   ""      normal: favorites only (or the drawer if none are set yet)
  *   text    normal: substring search across ALL apps (hidden included)
  *   *       normal: the full app drawer (every non-hidden app)
+ *   #[text] tag filter: apps whose tags match [text] (bare # = all tagged),
+ *           tap/Enter launches; tags are assigned via the long-press dialog
  *   -[text] edit hidden:    tap a row to toggle its [x], persisted immediately
  *   ![text] edit favorites: tap a row to toggle its [x], persisted immediately
  *   !!      reorder favorites: tap a row to pick it up (marked »), tap another
  *           row to drop it there; tap the picked row again to cancel
  *   ?       recents: the last-launched apps (in memory only, empty after restart)
  *   ~       + Enter: reload chopper.json from disk (config is cached otherwise)
- * Long-press any row to set a custom name.
+ * Long-press any row to set a custom name and its tags.
  */
 class MainActivity : Activity() {
 
@@ -184,7 +186,7 @@ class MainActivity : Activity() {
                 // throw. A HOME app must never crash, so drop the tap instead.
                 val entry = shownApps.getOrNull(position) ?: return@setOnItemClickListener
                 when (mode) {
-                    Mode.NORMAL, Mode.RECENTS -> launch(entry)
+                    Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER -> launch(entry)
                     Mode.HIDDEN_EDIT -> toggle(cfg.hidden, entry.key)
                     Mode.FAV_EDIT    -> toggle(cfg.favorites, entry.key)
                     Mode.FAV_REORDER -> reorderTap(entry.key)
@@ -243,10 +245,10 @@ class MainActivity : Activity() {
                     // sitting directly above the prompt — the natural Enter target.
                     // (Swap to firstOrNull if you'd rather Enter pick the
                     // alphabetically-first match instead.)
-                    // NORMAL and RECENTS both launch the row nearest the command line;
-                    // for "?" that's the most recently used app, so "?" + Enter is a
-                    // one-key relaunch of the last app.
-                    mode == Mode.NORMAL || mode == Mode.RECENTS ->
+                    // The read modes launch the row nearest the command line: for "?"
+                    // the most recent app, for "#" the nearest tag match. (edit modes
+                    // fall through to the prompt-clearing "done" gesture below.)
+                    mode == Mode.NORMAL || mode == Mode.RECENTS || mode == Mode.TAG_FILTER ->
                         shownApps.lastOrNull()?.let { launch(it) }
                     else -> prompt.setText("")
                 }
@@ -437,7 +439,7 @@ class MainActivity : Activity() {
      * unparseable primary is logged and .bak is tried before giving up to empty. A
      * HOME app must never throw on resume, so every error path degrades to a working
      * (if ruleless) launcher rather than crashing — and a single torn read of the
-     * primary no longer discards the user's favorites/hidden/names.
+     * primary no longer discards the user's favorites/hidden/names/tags.
      */
     private fun loadConfig(): ChopperConfig {
         parseConfig(File(filesDir, CONFIG_FILE))?.let { return it }
@@ -654,14 +656,29 @@ class MainActivity : Activity() {
 
     private fun promptRename(entry: AppEntry) {
         val key = entry.key
-        val input = EditText(this).apply {
+        // No autocorrect/autocapitalize on either field: a deliberate custom name or
+        // tag must not be silently "corrected" on the way in.
+        val noSuggest = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        val nameInput = EditText(this).apply {
             setText(cfg.names[key] ?: entry.systemLabel)
+            hint = getString(R.string.hint_rename_name)
             isSingleLine = true
-            // Match the command prompt: no autocorrect/autocapitalize, so a
-            // deliberate custom name isn't silently "corrected" on the way in.
-            inputType = InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            inputType = noSuggest
             setSelection(text.length)
+        }
+        val tagsInput = EditText(this).apply {
+            // Show the stored tags back as a plain comma-separated list to edit.
+            setText(cfg.tags[key]?.joinToString(", ").orEmpty())
+            hint = getString(R.string.hint_rename_tags)
+            isSingleLine = true
+            inputType = noSuggest
+        }
+        val pad = 12.dp()
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(nameInput, LinearLayout.LayoutParams(MATCH, WRAP))
+            addView(tagsInput, LinearLayout.LayoutParams(MATCH, WRAP))
         }
         // Dismiss any dialog already up (rapid long-presses) before opening a new
         // one, and keep the reference so onDestroy can tear it down. Clear the field
@@ -671,16 +688,20 @@ class MainActivity : Activity() {
         // instead of flashing the platform's default light Material dialog.
         renameDialog = AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle(entry.label)
-            .setView(input)
+            .setView(container)
             .setPositiveButton(android.R.string.ok) { _, _ ->
-                val name = input.text?.toString()?.trim().orEmpty()
+                val name = nameInput.text?.toString()?.trim().orEmpty()
                 // Empty OR identical to the app's own label = no override: drop any
                 // custom name instead of persisting a redundant one, so `names` only
                 // ever holds genuine overrides and re-typing the original clears it.
                 if (name.isEmpty() || name == entry.systemLabel) cfg.names.remove(key)
                 else cfg.names[key] = name
+                // Tags: normalize, and drop the key entirely when none remain so `tags`
+                // never holds an empty list (matching how names drops a blank override).
+                val tags = LauncherLogic.parseTags(tagsInput.text?.toString().orEmpty())
+                if (tags.isEmpty()) cfg.tags.remove(key) else cfg.tags[key] = tags.toMutableList()
                 saveConfig()
-                rebuildLabelsFor(key)  // in-memory: only this component's row changes
+                rebuildLabelsFor(key)  // in-memory: relabel + re-sort this component's row
             }
             .setNegativeButton(android.R.string.cancel, null)
             .setOnDismissListener { renameDialog = null }
@@ -780,6 +801,8 @@ class MainActivity : Activity() {
             // Recents lists the last-launched apps (newest nearest the prompt). Like
             // reorder, any text after "?" is ignored — the list is short and fixed.
             Mode.RECENTS -> LauncherLogic.recentsInDisplayOrder(allApps, recentKeys)
+            // "#": apps whose tags match the text after it (bare "#" lists all tagged).
+            Mode.TAG_FILTER -> LauncherLogic.tagged(allApps, cfg.tags, q.substring(1).trim())
             // Edit modes list EVERY app (so anything can be toggled), narrowed by
             // whatever follows the sigil. Membership shows as [x]/[ ] in getView.
             Mode.HIDDEN_EDIT, Mode.FAV_EDIT -> LauncherLogic.search(allApps, q.substring(1).trim())
@@ -883,7 +906,7 @@ class MainActivity : Activity() {
                 // "» " marks the picked-up row; "  " keeps the others column-aligned
                 // (same two-cell width in the monospace face).
                 Mode.FAV_REORDER -> (if (key == reorderPick) "» " else "  ") + entry.label
-                Mode.NORMAL, Mode.RECENTS -> entry.label
+                Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER -> entry.label
             }
             // Accessibility: the "[x]"/"[ ]" glyph reads as literal punctuation to a
             // screen reader, so in the edit modes give the row a spoken description of
@@ -907,7 +930,7 @@ class MainActivity : Activity() {
                     },
                     entry.label,
                 )
-                Mode.NORMAL, Mode.RECENTS -> null
+                Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER -> null
             }
             return tv
         }

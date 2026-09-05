@@ -16,6 +16,9 @@ a launcher does not strictly need and see how small the APK gets.
   - `*` — the full drawer: everything except hidden apps, **but a favorite is
     always kept even when also hidden** (favoriting overrides hiding, so a starred
     app is never trimmed from the default views)
+  - `#[text]` — tag filter: apps whose tags match `text` (a bare `#` lists every
+    tagged app). Tap or **Enter** to launch. Tags are assigned in the long-press
+    dialog; a tagged app shows here even when hidden
   - `-[text]` — edit hidden: tap a row to toggle `[x]`, saved immediately
   - `![text]` — edit favorites: tap a row to toggle `[x]`, saved immediately
   - `!!` — reorder favorites: tap a row to pick it up (marked `»`), tap another
@@ -28,15 +31,16 @@ a launcher does not strictly need and see how small the APK gets.
   command line (the bottom-most, since the list fills upward). This holds even on an
   empty prompt — **Enter** with nothing typed launches your nearest favorite. That
   is intentional: it makes the prompt a one-key quick-launch for your top favorite.
-- Long-press any row to set a custom name.
+- Long-press any row to set a custom name and its tags (comma-separated).
 - Registers as `HOME` + `LAUNCHER`, `singleTask`. That's it.
 
 ## Which line?
 
 Two lines are maintained; pick whichever fits.
 
-- **0.2.x (this line)** — adds favorites (with reordering), hidden apps and custom
-  names, stored in `chopper.json`. App enumeration is single-user only.
+- **0.2.x (this line)** — adds favorites (with reordering), hidden apps, custom
+  names and per-app tags, stored in `chopper.json`. App enumeration is
+  single-user only.
 - **0.1.x** — deliberately barebones and staying that way: no config, no
   persistence, just list, filter and launch. It is also the only line that carries
   the `LauncherApps` multi-user listing (work-profile, cloned and private-space
@@ -52,7 +56,7 @@ Compared to Kolibri Launcher, the Chopper drops **all** of it:
 - no Hilt / DI — a single `Activity` wires itself
 - no Navigation / Fragments — one `Activity` (rename is a bare platform dialog)
 - no DataStore / Room / SharedPreferences — the small amount of state (hidden
-  apps, favorites, custom names) is a single hand-rolled `chopper.json` in
+  apps, favorites, custom names, tags) is a single hand-rolled `chopper.json` in
   `filesDir`, written durably (temp-file + fsync + rename, then a directory
   fsync so the rename itself survives power-loss, not just a crash); the previous
   good version is rotated into a `.bak` that recovery falls back to and heals the
