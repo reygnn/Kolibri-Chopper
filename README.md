@@ -20,6 +20,9 @@ a launcher does not strictly need and see how small the APK gets.
   - `![text]` — edit favorites: tap a row to toggle `[x]`, saved immediately
   - `!!` — reorder favorites: tap a row to pick it up (marked `»`), tap another
     row to drop it there; tap the picked row again to cancel. Saved immediately
+  - `?` — the last 8 launched apps, newest nearest the command line. Kept in
+    memory only, so it starts empty on every cold start; **Enter** relaunches the
+    most recent
   - `~` + **Enter** — reload the config from disk
 - Tap a row or press **Enter** to launch. **Enter** launches the row nearest the
   command line (the bottom-most, since the list fills upward). This holds even on an

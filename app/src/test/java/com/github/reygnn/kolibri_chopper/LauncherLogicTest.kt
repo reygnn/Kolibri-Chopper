@@ -43,6 +43,11 @@ class LauncherLogicTest {
         assertEquals(Mode.FAV_REORDER, LauncherLogic.parseMode("!!maps"))
     }
 
+    @Test fun `question mark is recents`() {
+        assertEquals(Mode.RECENTS, LauncherLogic.parseMode("?"))
+        assertEquals(Mode.RECENTS, LauncherLogic.parseMode("?maps"))
+    }
+
     // ---- reorder ------------------------------------------------------------
 
     @Test fun `reorder moves a row down onto the target's slot`() {
@@ -149,5 +154,50 @@ class LauncherLogicTest {
         // Favorites c (rank 0) and a (rank 1); non-favorites b, d keep their order.
         val result = LauncherLogic.orderWithFavorites(apps, linkedSetOf("c", "a"))
         assertEquals(listOf("b", "d", "c", "a"), result.keys())
+    }
+
+    // ---- pushRecent ---------------------------------------------------------
+
+    @Test fun `pushRecent puts a new key at the front`() {
+        assertEquals(listOf("b", "a"), LauncherLogic.pushRecent(listOf("a"), "b", 8))
+    }
+
+    @Test fun `pushRecent moves an existing key to the front without duplicating`() {
+        assertEquals(listOf("c", "a", "b"), LauncherLogic.pushRecent(listOf("a", "b", "c"), "c", 8))
+    }
+
+    @Test fun `pushRecent caps the list at the limit, dropping the oldest`() {
+        // Front-inserting "d" onto a full 3-slot list evicts the oldest ("a").
+        assertEquals(listOf("d", "c", "b"), LauncherLogic.pushRecent(listOf("c", "b", "a"), "d", 3))
+    }
+
+    @Test fun `pushRecent re-promoting a key never grows past the limit`() {
+        assertEquals(listOf("a", "c", "b"), LauncherLogic.pushRecent(listOf("c", "b", "a"), "a", 3))
+    }
+
+    @Test fun `pushRecent does not mutate its input`() {
+        val current = listOf("a", "b")
+        LauncherLogic.pushRecent(current, "c", 8)
+        assertEquals(listOf("a", "b"), current)
+    }
+
+    // ---- recentsInDisplayOrder ----------------------------------------------
+
+    @Test fun `recentsInDisplayOrder reverses so the newest sits last`() {
+        val all = rows("a", "b", "c")
+        // recentKeys is newest-first (c launched most recently); display is reversed
+        // so the newest lands nearest the prompt (last row).
+        val result = LauncherLogic.recentsInDisplayOrder(all, listOf("c", "b", "a"))
+        assertEquals(listOf("a", "b", "c"), result.keys())
+    }
+
+    @Test fun `recentsInDisplayOrder drops a recent whose app is gone`() {
+        val all = rows("a", "b")
+        val result = LauncherLogic.recentsInDisplayOrder(all, listOf("gone", "b", "a"))
+        assertEquals(listOf("a", "b"), result.keys())
+    }
+
+    @Test fun `recentsInDisplayOrder with no recents is empty`() {
+        assertEquals(emptyList<String>(), LauncherLogic.recentsInDisplayOrder(rows("a", "b"), emptyList()).keys())
     }
 }

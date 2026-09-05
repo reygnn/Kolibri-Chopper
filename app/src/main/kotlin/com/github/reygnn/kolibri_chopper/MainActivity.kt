@@ -104,6 +104,12 @@ class MainActivity : Activity() {
     private var allApps: List<AppEntry> = emptyList()
     private var shownApps: List<AppEntry> = emptyList()
 
+    // The "?" mode: the component keys of the most recently launched apps, newest
+    // first. Deliberately IN MEMORY ONLY — never written to chopper.json — so it
+    // starts empty on every cold start. Updated only by launch() on a successful
+    // start; capped at RECENTS_LIMIT via LauncherLogic.pushRecent.
+    private var recentKeys: List<String> = emptyList()
+
     // Three separate counters keep three separate concerns from stepping on each
     // other. All are written only on the main thread (single writer, so ++ stays
     // safe); @Volatile so the IO loader can read the latest value and bail early.
@@ -172,7 +178,7 @@ class MainActivity : Activity() {
                 // throw. A HOME app must never crash, so drop the tap instead.
                 val entry = shownApps.getOrNull(position) ?: return@setOnItemClickListener
                 when (mode) {
-                    Mode.NORMAL      -> launch(entry)
+                    Mode.NORMAL, Mode.RECENTS -> launch(entry)
                     Mode.HIDDEN_EDIT -> toggle(cfg.hidden, entry.key)
                     Mode.FAV_EDIT    -> toggle(cfg.favorites, entry.key)
                     Mode.FAV_REORDER -> reorderTap(entry.key)
@@ -231,7 +237,11 @@ class MainActivity : Activity() {
                     // sitting directly above the prompt — the natural Enter target.
                     // (Swap to firstOrNull if you'd rather Enter pick the
                     // alphabetically-first match instead.)
-                    mode == Mode.NORMAL -> shownApps.lastOrNull()?.let { launch(it) }
+                    // NORMAL and RECENTS both launch the row nearest the command line;
+                    // for "?" that's the most recently used app, so "?" + Enter is a
+                    // one-key relaunch of the last app.
+                    mode == Mode.NORMAL || mode == Mode.RECENTS ->
+                        shownApps.lastOrNull()?.let { launch(it) }
                     else -> prompt.setText("")
                 }
                 true
@@ -747,6 +757,9 @@ class MainActivity : Activity() {
             // any text after "!!" is ignored (filtering would scramble the positions
             // the reorder acts on). Nothing to show when none are set.
             Mode.FAV_REORDER -> LauncherLogic.favoritesInDisplayOrder(allApps, cfg.favorites)
+            // Recents lists the last-launched apps (newest nearest the prompt). Like
+            // reorder, any text after "?" is ignored — the list is short and fixed.
+            Mode.RECENTS -> LauncherLogic.recentsInDisplayOrder(allApps, recentKeys)
             // Edit modes list EVERY app (so anything can be toggled), narrowed by
             // whatever follows the sigil. Membership shows as [x]/[ ] in getView.
             Mode.HIDDEN_EDIT, Mode.FAV_EDIT -> LauncherLogic.search(allApps, q.substring(1).trim())
@@ -789,6 +802,10 @@ class MainActivity : Activity() {
         }
         try {
             startActivity(intent)
+            // Only a launch that actually started counts as "recent" — the catch
+            // branches below leave the list untouched so a dead component never
+            // lingers at the top of "?".
+            recentKeys = LauncherLogic.pushRecent(recentKeys, entry.key, RECENTS_LIMIT)
         } catch (e: ActivityNotFoundException) {
             // Component gone since the list loaded (uninstall race).
             Log.w("Chopper", "launch unavailable: ${entry.component}")
@@ -836,7 +853,7 @@ class MainActivity : Activity() {
                 // "» " marks the picked-up row; "  " keeps the others column-aligned
                 // (same two-cell width in the monospace face).
                 Mode.FAV_REORDER -> (if (key == reorderPick) "» " else "  ") + entry.label
-                Mode.NORMAL      -> entry.label
+                Mode.NORMAL, Mode.RECENTS -> entry.label
             }
             // Accessibility: the "[x]"/"[ ]" glyph reads as literal punctuation to a
             // screen reader, so in the edit modes give the row a spoken description of
@@ -860,7 +877,7 @@ class MainActivity : Activity() {
                     },
                     entry.label,
                 )
-                Mode.NORMAL -> null
+                Mode.NORMAL, Mode.RECENTS -> null
             }
             return tv
         }
@@ -870,5 +887,6 @@ class MainActivity : Activity() {
         const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
         const val CONFIG_FILE = "chopper.json"
+        const val RECENTS_LIMIT = 8  // how many apps "?" remembers, in memory only
     }
 }

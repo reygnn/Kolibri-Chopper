@@ -16,7 +16,7 @@ import java.util.Locale
 
 /** The command-line mode, chosen by the prompt's leading sigil. Top-level so the
  *  Activity, the adapter and the tests can all name it. */
-internal enum class Mode { NORMAL, HIDDEN_EDIT, FAV_EDIT, FAV_REORDER }
+internal enum class Mode { NORMAL, HIDDEN_EDIT, FAV_EDIT, FAV_REORDER, RECENTS }
 
 /** The two fields the ordering/search logic needs from a row: its identity [key]
  *  and its case-folded label. AppEntry implements this, and tests fake it with a
@@ -36,6 +36,7 @@ internal object LauncherLogic {
         trimmed.startsWith("!!") -> Mode.FAV_REORDER
         trimmed.startsWith("#") -> Mode.HIDDEN_EDIT
         trimmed.startsWith("!") -> Mode.FAV_EDIT
+        trimmed.startsWith("?") -> Mode.RECENTS
         else -> Mode.NORMAL
     }
 
@@ -89,5 +90,27 @@ internal object LauncherLogic {
         val dest = out.indexOf(targetKey)
         out.add(if (from < to) dest + 1 else dest, pickedKey)
         return out
+    }
+
+    /**
+     * Record a launch in the most-recent-first recents list: [key] goes to the front,
+     * any earlier occurrence is dropped (a relaunch moves the app up rather than
+     * duplicating it), and the result is capped at [limit]. Pure: [current] is not
+     * mutated. The Activity holds this list in memory only — it is deliberately never
+     * persisted, so it starts empty on every cold start.
+     */
+    fun pushRecent(current: List<String>, key: String, limit: Int): List<String> =
+        (listOf(key) + current.filter { it != key }).take(limit)
+
+    /**
+     * The recently-launched apps as rows, ready for the list. [recentKeys] is
+     * most-recent-first; the result is REVERSED so the most recent lands last — with
+     * isStackFromBottom that's the row nearest the prompt (the Enter quick-launch
+     * target), matching how favorites read. Keys whose app is no longer in [all] (an
+     * uninstall since it was launched) drop out silently.
+     */
+    fun <T : Ordered> recentsInDisplayOrder(all: List<T>, recentKeys: List<String>): List<T> {
+        val byKey = all.associateBy { it.key }
+        return recentKeys.asReversed().mapNotNull { byKey[it] }
     }
 }
