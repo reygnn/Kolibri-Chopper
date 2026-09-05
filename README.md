@@ -48,7 +48,7 @@ Two lines are maintained; pick whichever fits.
   the `LauncherApps` multi-user listing (work-profile, cloned and private-space
   apps). Choose it from the
   [Releases](https://github.com/reygnn/Kolibri-Chopper/releases) page (latest:
-  0.1.2) if you prefer the smaller, stateless launcher — or need cross-profile apps.
+  0.1.3) if you prefer the smaller, stateless launcher — or need cross-profile apps.
 
 ## What was chopped
 
