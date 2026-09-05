@@ -15,6 +15,7 @@ import android.text.TextUtils
 import android.text.TextWatcher
 import android.util.Log
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -67,6 +68,12 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Under enforced edge-to-edge (Android 16) the system won't push our content
+        // up for the keyboard on its own, so we own the insets and pad for the IME
+        // ourselves (the OnApplyWindowInsetsListener below, systemBars | ime). Pairs
+        // with windowSoftInputMode=adjustResize; verified on-device in the 0.2 line.
+        window.setDecorFitsSystemWindows(false)
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xFF000000.toInt())
@@ -99,8 +106,21 @@ class MainActivity : Activity() {
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
                 override fun afterTextChanged(s: Editable?) = applyFilter(s?.toString().orEmpty())
             })
-            setOnEditorActionListener { _, _, _ ->
-                shownApps.firstOrNull()?.let { launch(it) }
+            setOnEditorActionListener { _, actionId, event ->
+                // Act once per Enter. A soft-keyboard action arrives once with a
+                // null event; a hardware/Bluetooth Enter invokes this on BOTH the
+                // key-down and the key-up, so without this guard the launch would
+                // fire twice. Handle the GO action or the key-DOWN edge only;
+                // ignore (don't consume) the rest.
+                val enterDown = event?.keyCode == KeyEvent.KEYCODE_ENTER &&
+                    event.action == KeyEvent.ACTION_DOWN
+                if (actionId != EditorInfo.IME_ACTION_GO && !enterDown) {
+                    return@setOnEditorActionListener false
+                }
+                // lastOrNull, not firstOrNull: with isStackFromBottom the list fills
+                // upward from the command line, so the LAST row is the one sitting
+                // directly above the prompt — the natural Enter target.
+                shownApps.lastOrNull()?.let { launch(it) }
                 true
             }
         }
@@ -135,6 +155,11 @@ class MainActivity : Activity() {
      * Reloaded on each resume so install/uninstall changes surface. A generation
      * counter makes the most-recently-STARTED load win: if an older load finishes
      * after a newer one has started, its now-stale result is dropped.
+     *
+     * loadApps() returns null only when the profile enumeration itself failed (e.g.
+     * a system_server restart): keep the last-known-good list rather than wiping the
+     * home screen — a transient failure no longer blanks it. A successful load that
+     * happens to be empty still commits.
      */
     private fun refreshApps() {
         val generation = ++loadGeneration
@@ -142,7 +167,7 @@ class MainActivity : Activity() {
             val loaded = loadApps()
             runOnUiThread {
                 if (generation != loadGeneration) return@runOnUiThread  // superseded
-                allApps = loaded
+                loaded?.let { allApps = it }
                 applyFilter(prompt.text?.toString().orEmpty())
             }
         }.start()
@@ -155,11 +180,13 @@ class MainActivity : Activity() {
         // setText("") fires the TextWatcher synchronously, so applyFilter has
         // already refreshed shownApps by the time setSelection reads its size.
         prompt.setText("")
-        listView.setSelection(shownApps.size)
+        // Last valid index is size - 1; guard the empty case (no apps loaded yet),
+        // where size - 1 would be an invalid -1.
+        if (shownApps.isNotEmpty()) listView.setSelection(shownApps.size - 1)
         hideKeyboard()
     }
 
-    private fun loadApps(): List<AppEntry> {
+    private fun loadApps(): List<AppEntry>? {
         val launcherApps = getSystemService(LauncherApps::class.java)
         val pm = packageManager
         val self = packageName
@@ -169,13 +196,15 @@ class MainActivity : Activity() {
         // and getUserBadgedLabel surface plain RuntimeExceptions: SecurityException
         // when a profile turns inaccessible mid-scan (Home-role / work-profile
         // TOCTOU), or DeadSystemRuntimeException if system_server restarts. Catch
-        // broadly and drop just the offending profile; give up to an empty list
-        // only if even the top-level profile enumeration fails.
+        // broadly and drop just the offending profile; return the null failure
+        // sentinel only if even the top-level profile enumeration fails, so the
+        // caller keeps the last-known-good list instead of blanking HOME. A query
+        // that SUCCEEDS returns its result even when empty.
         val profiles = try {
             launcherApps.profiles
         } catch (e: RuntimeException) {
             Log.w("Chopper", "profile enumeration failed", e)
-            return emptyList()
+            return null  // failure sentinel: keep the current list, don't wipe it
         }
         return profiles.flatMap { user ->
             try {
@@ -193,7 +222,11 @@ class MainActivity : Activity() {
                             else pm.getUserBadgedLabel(raw, user).toString()
                         AppEntry(
                             label = display,
-                            labelLower = display.lowercase(Locale.getDefault()),
+                            // Fold with Locale.ROOT, never the device locale — the
+                            // same ROOT the needle uses in applyFilter, so the I/i
+                            // mapping stays invariant (a Turkish/Azeri phone must not
+                            // fold "Instagram" to a dotless ı the search can't match).
+                            labelLower = display.lowercase(Locale.ROOT),
                             component = info.componentName,
                             user = info.user,
                         )
@@ -206,7 +239,10 @@ class MainActivity : Activity() {
     }
 
     private fun applyFilter(raw: String) {
-        val needle = raw.trim().lowercase(Locale.getDefault())
+        // Fold with Locale.ROOT, matching the label fold in loadApps — a device
+        // locale (Turkish/Azeri) would map the needle's "i" differently from the
+        // label's, and a substring search would then never match.
+        val needle = raw.trim().lowercase(Locale.ROOT)
         shownApps = if (needle.isEmpty()) {
             allApps
         } else {
