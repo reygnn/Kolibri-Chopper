@@ -34,7 +34,7 @@ internal object LauncherLogic {
      */
     fun parseMode(trimmed: String): Mode = when {
         trimmed.startsWith("!!") -> Mode.FAV_REORDER
-        trimmed.startsWith("#") -> Mode.HIDDEN_EDIT
+        trimmed.startsWith("-") -> Mode.HIDDEN_EDIT
         trimmed.startsWith("!") -> Mode.FAV_EDIT
         trimmed.startsWith("?") -> Mode.RECENTS
         else -> Mode.NORMAL

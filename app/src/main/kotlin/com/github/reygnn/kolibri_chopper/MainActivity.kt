@@ -51,10 +51,11 @@ import java.util.concurrent.RejectedExecutionException
  *   ""      normal: favorites only (or the drawer if none are set yet)
  *   text    normal: substring search across ALL apps (hidden included)
  *   *       normal: the full app drawer (every non-hidden app)
- *   #[text] edit hidden:    tap a row to toggle its [x], persisted immediately
+ *   -[text] edit hidden:    tap a row to toggle its [x], persisted immediately
  *   ![text] edit favorites: tap a row to toggle its [x], persisted immediately
  *   !!      reorder favorites: tap a row to pick it up (marked »), tap another
  *           row to drop it there; tap the picked row again to cancel
+ *   ?       recents: the last-launched apps (in memory only, empty after restart)
  *   ~       + Enter: reload chopper.json from disk (config is cached otherwise)
  * Long-press any row to set a custom name.
  */

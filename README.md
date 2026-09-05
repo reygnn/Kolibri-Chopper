@@ -16,7 +16,7 @@ a launcher does not strictly need and see how small the APK gets.
   - `*` — the full drawer: everything except hidden apps, **but a favorite is
     always kept even when also hidden** (favoriting overrides hiding, so a starred
     app is never trimmed from the default views)
-  - `#[text]` — edit hidden: tap a row to toggle `[x]`, saved immediately
+  - `-[text]` — edit hidden: tap a row to toggle `[x]`, saved immediately
   - `![text]` — edit favorites: tap a row to toggle `[x]`, saved immediately
   - `!!` — reorder favorites: tap a row to pick it up (marked `»`), tap another
     row to drop it there; tap the picked row again to cancel. Saved immediately

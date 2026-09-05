@@ -28,9 +28,16 @@ class LauncherLogicTest {
         assertEquals(Mode.NORMAL, LauncherLogic.parseMode("*"))
     }
 
-    @Test fun `hash is hidden-edit`() {
-        assertEquals(Mode.HIDDEN_EDIT, LauncherLogic.parseMode("#"))
-        assertEquals(Mode.HIDDEN_EDIT, LauncherLogic.parseMode("#maps"))
+    @Test fun `dash is hidden-edit`() {
+        assertEquals(Mode.HIDDEN_EDIT, LauncherLogic.parseMode("-"))
+        assertEquals(Mode.HIDDEN_EDIT, LauncherLogic.parseMode("-maps"))
+    }
+
+    @Test fun `hash is no longer a sigil and stays NORMAL`() {
+        // hidden-edit moved off "#" (freeing it for a future hashtag mode); until then
+        // "#" is just plain text, so it must parse as a normal substring search.
+        assertEquals(Mode.NORMAL, LauncherLogic.parseMode("#"))
+        assertEquals(Mode.NORMAL, LauncherLogic.parseMode("#maps"))
     }
 
     @Test fun `single bang is fav-edit`() {
