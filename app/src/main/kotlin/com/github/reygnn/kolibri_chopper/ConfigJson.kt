@@ -24,6 +24,7 @@ internal object ConfigJson {
             put("favorites", JSONArray(config.favorites.toList()))
             put("names", names)
             put("tags", tags)
+            put("wallpaper", config.wallpaper)
         }.toString(2)
     }
 
@@ -59,6 +60,9 @@ internal object ConfigJson {
                 if (list.isNotEmpty()) loaded.tags[k] = list
             }
         }
+        // Missing key (older config, or off) → "". optString already yields "" when
+        // absent; kept explicit for symmetry with the sections above.
+        loaded.wallpaper = j.optString("wallpaper", "")
         loaded
     } catch (e: Exception) {
         null

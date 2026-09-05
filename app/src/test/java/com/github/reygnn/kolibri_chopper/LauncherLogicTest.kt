@@ -340,4 +340,33 @@ class LauncherLogicTest {
         assertEquals(listOf("a", "b"), LauncherLogic.tagged(rows("a", "b"), tags, "work").keys())
         assertEquals(listOf("b"), LauncherLogic.tagged(rows("a", "b"), tags, "worko").keys())
     }
+
+    // ---- nextWallpaper ------------------------------------------------------
+
+    @Test fun `nextWallpaper walks each motif then off then wraps`() {
+        val motifs = listOf("xi", "wave")
+        // off -> first motif -> next motif -> off -> first motif ...
+        assertEquals("xi", LauncherLogic.nextWallpaper("", motifs))
+        assertEquals("wave", LauncherLogic.nextWallpaper("xi", motifs))
+        assertEquals("", LauncherLogic.nextWallpaper("wave", motifs))
+        assertEquals("xi", LauncherLogic.nextWallpaper("", motifs))
+    }
+
+    @Test fun `nextWallpaper with a single motif toggles motif and off`() {
+        val motifs = listOf("xi")
+        assertEquals("xi", LauncherLogic.nextWallpaper("", motifs))
+        assertEquals("", LauncherLogic.nextWallpaper("xi", motifs))
+    }
+
+    @Test fun `nextWallpaper with no motifs stays off`() {
+        // The cycle is just "off": there is nothing to rotate to.
+        assertEquals("", LauncherLogic.nextWallpaper("", emptyList()))
+        assertEquals("", LauncherLogic.nextWallpaper("anything", emptyList()))
+    }
+
+    @Test fun `nextWallpaper from an unknown name jumps to the first motif`() {
+        // A stale name (motif removed, or a hand-edited config) is not in the cycle;
+        // rotating from it lands on the first real motif rather than getting stuck.
+        assertEquals("xi", LauncherLogic.nextWallpaper("gone", listOf("xi", "wave")))
+    }
 }

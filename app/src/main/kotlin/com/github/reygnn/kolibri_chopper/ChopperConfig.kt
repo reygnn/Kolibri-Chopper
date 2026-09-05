@@ -24,6 +24,10 @@ internal class ChopperConfig(
     // see LauncherLogic.parseTags), ordered first-entered. Stored in chopper.json like
     // names; a key with no tags is dropped rather than persisting an empty list.
     val tags: MutableMap<String, MutableList<String>> = linkedMapOf(),
+    // The active 0.3 wallpaper motif's name (AsciiArt.names), or "" for off. A var,
+    // not a collection: the "~art" command reassigns it in place. Serialized like the
+    // rest; a missing key parses back to "" (off), so older configs stay compatible.
+    var wallpaper: String = "",
 ) {
     /**
      * A copy for handing to the background loader. loadApps() only READS these
@@ -43,5 +47,6 @@ internal class ChopperConfig(
         LinkedHashMap<String, MutableList<String>>().also { c ->
             for ((k, v) in tags) c[k] = ArrayList(v)
         },
+        wallpaper,
     )
 }

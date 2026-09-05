@@ -171,4 +171,17 @@ internal object LauncherLogic {
             if (n.isEmpty()) ts.isNotEmpty() else ts.any { it.startsWith(n) }
         }
     }
+
+    /**
+     * The next wallpaper in the "~art" rotation. The cycle is every motif in [names]
+     * followed by "" ("off"), so repeated "~art" walks motif → motif → … → off →
+     * back to the first motif. [current] is the persisted name ("" when off). An
+     * unknown [current] (a stale name from a hand-edited config) rotates to the first
+     * motif; with no motifs the cycle is just "off", so it stays "". Pure.
+     */
+    fun nextWallpaper(current: String, names: List<String>): String {
+        val cycle = names + ""            // each motif, then "off"
+        val idx = cycle.indexOf(current)  // -1 when current is unknown/stale
+        return cycle[(idx + 1) % cycle.size]
+    }
 }

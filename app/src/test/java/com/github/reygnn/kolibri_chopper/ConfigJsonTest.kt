@@ -126,4 +126,22 @@ class ConfigJsonTest {
         val parsed = ConfigJson.parse("""{"favorites":["x","y","x"]}""")!!
         assertEquals(listOf("x", "y"), parsed.favorites.toList())
     }
+
+    @Test fun `round-trips the wallpaper name`() {
+        val original = ChopperConfig().apply { wallpaper = "xi" }
+        val parsed = ConfigJson.parse(ConfigJson.serialize(original))!!
+        assertEquals("xi", parsed.wallpaper)
+    }
+
+    @Test fun `a missing wallpaper key parses to off - older-config compatibility`() {
+        // A config written before the 0.3 wallpaper key must still load, with the
+        // backdrop simply off.
+        val parsed = ConfigJson.parse("""{"favorites":["x"]}""")!!
+        assertEquals("", parsed.wallpaper)
+    }
+
+    @Test fun `the default config serializes wallpaper as off`() {
+        val parsed = ConfigJson.parse(ConfigJson.serialize(ChopperConfig()))!!
+        assertEquals("", parsed.wallpaper)
+    }
 }

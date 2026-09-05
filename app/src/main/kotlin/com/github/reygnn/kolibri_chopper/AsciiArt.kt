@@ -45,6 +45,25 @@ internal object AsciiArt {
     val DOUBLE_HAPPINESS: List<String> = mirror(XI_HALF, gap = 1)
 
     /**
+     * The selectable motifs, keyed by the name persisted in chopper.json
+     * (ChopperConfig.wallpaper). Insertion order is the rotation order of the "~art"
+     * command; "off" (the empty name) is appended by the rotation logic, not stored
+     * here. Add a motif by adding an entry.
+     */
+    private val motifs: Map<String, List<String>> = linkedMapOf(
+        "xi" to DOUBLE_HAPPINESS,
+    )
+
+    /** The motif names in rotation order (excludes "off"). */
+    val names: List<String> = motifs.keys.toList()
+
+    /**
+     * Resolve a persisted wallpaper name to its lines. An unknown name or the empty
+     * "off" name yields an empty list, which [AsciiWallpaperView] draws as nothing.
+     */
+    fun lines(name: String): List<String> = motifs[name] ?: emptyList()
+
+    /**
      * Compose a symmetric two-up motif from a single [half] block: trim the literal
      * to its art lines, pad each to the half's width (so the two copies stay column-
      * aligned regardless of trailing spaces), and join each line to itself across

@@ -64,6 +64,7 @@ import java.util.concurrent.RejectedExecutionException
  *           row to drop it there; tap the picked row again to cancel
  *   ?       recents: the last-launched apps (in memory only, empty after restart)
  *   ~       + Enter: reload chopper.json from disk (config is cached otherwise)
+ *   ~art    + Enter: cycle the 0.3 wallpaper backdrop (each motif, then off, wrap)
  * Long-press any row to set a custom name and its tags.
  */
 class MainActivity : Activity() {
@@ -163,6 +164,9 @@ class MainActivity : Activity() {
     private lateinit var listView: ListView
     private lateinit var prompt: EditText
     private lateinit var adapter: AppListAdapter
+    // The 0.3 wallpaper backdrop behind the app list. Its motif follows cfg.wallpaper
+    // — set on every config (re)load and by the "~art" command; "" (off) draws nothing.
+    private lateinit var wallpaper: AsciiWallpaperView
 
     // The long-press rename dialog, tracked only so it can be dismissed if the
     // activity is torn down while it is open — an undismissed dialog leaks its
@@ -257,6 +261,17 @@ class MainActivity : Activity() {
                         prompt.setText("")
                         refreshApps(reloadConfig = true)
                     }
+                    // "~art": cycle the wallpaper motif (each motif, then off, wrap).
+                    // A one-shot command like "~", so it lives on Enter, not a live
+                    // sigil. Bumps configEpoch — like toggle() — so a "~" reload in
+                    // flight keeps this new choice instead of the pre-change disk copy.
+                    prompt.text?.toString()?.trim() == "~art" -> {
+                        prompt.setText("")
+                        cfg.wallpaper = LauncherLogic.nextWallpaper(cfg.wallpaper, AsciiArt.names)
+                        ++configEpoch
+                        saveConfig()
+                        applyWallpaper()
+                    }
                     // In an edit mode Enter is a "done" gesture: clear the prompt
                     // back to normal instead of launching whatever sits at the top.
                     // lastOrNull, not firstOrNull: with isStackFromBottom the list
@@ -307,11 +322,9 @@ class MainActivity : Activity() {
         // backdrop BEHIND it. The wallpaper view fills the whole screen edge-to-edge
         // (no inset padding — it paints behind the system bars too); the app-list root
         // keeps the systemBars|ime inset listener above. The root is transparent, so
-        // the dimmed motif shows through. First 0.3 test slice: one motif, forced on
-        // (no ~art command / no persistence yet).
-        val wallpaper = AsciiWallpaperView(this).apply {
-            setMotif(AsciiArt.DOUBLE_HAPPINESS)
-        }
+        // the dimmed motif shows through. It starts empty (off); applyWallpaper() sets
+        // the motif once the config is loaded (see refreshApps), and "~art" cycles it.
+        wallpaper = AsciiWallpaperView(this)
         val content = FrameLayout(this).apply {
             addView(wallpaper, FrameLayout.LayoutParams(MATCH, MATCH))
             addView(root, FrameLayout.LayoutParams(MATCH, MATCH))
@@ -383,6 +396,11 @@ class MainActivity : Activity() {
                     if (configEpoch == cfgEpoch) {
                         cfg = useCfg
                         configLoaded = true
+                        // The config just became authoritative (cold start or "~"
+                        // reload) — sync the backdrop to its wallpaper name. Skipped
+                        // when a mutation slipped in (epoch advanced): the live cfg is
+                        // kept and its motif is already on screen.
+                        applyWallpaper()
                     }
                 }
                 // Commit the enumeration unless a rename made its labels stale. A
@@ -500,6 +518,12 @@ class MainActivity : Activity() {
     private fun saveConfig() {
         val payload = ConfigJson.serialize(cfg)
         submitIo { writeConfigFile(payload, rotateBackup = true) }
+    }
+
+    /** Sync the wallpaper backdrop to the current [cfg]: resolve its motif name to
+     *  lines (an unknown or "" name draws nothing). Cheap main-thread string work. */
+    private fun applyWallpaper() {
+        wallpaper.setMotif(AsciiArt.lines(cfg.wallpaper))
     }
 
     /**
