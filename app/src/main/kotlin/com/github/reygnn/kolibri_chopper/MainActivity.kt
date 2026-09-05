@@ -22,7 +22,6 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
-import android.view.WindowInsetsAnimation
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.BaseAdapter
@@ -159,13 +158,9 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // We drive edge-to-edge and the IME slide entirely ourselves (the inset
-        // listener + WindowInsetsAnimation.Callback below). Telling the framework we
-        // fit no system windows stops it from ALSO resizing/panning the window when
-        // the keyboard appears — without this the system's own adjustResize fires a
-        // hard relayout of the ListView (the "list blinks and redraws" flash) that
-        // fights our smooth padding animation. adjustResize in the manifest is the
-        // matching softInputMode so the IME inset is delivered as an animation.
+        // Under enforced edge-to-edge (Android 16) the system does NOT push our content
+        // up for the keyboard on its own — adjustResize is a no-op and the IME just
+        // covers the prompt. So we own the insets and pad for the IME ourselves (below).
         window.setDecorFitsSystemWindows(false)
 
         val root = LinearLayout(this).apply {
@@ -257,48 +252,24 @@ class MainActivity : Activity() {
         }
         root.addView(prompt, LinearLayout.LayoutParams(MATCH, WRAP))
 
-        // Edge-to-edge is mandatory on Android 16 — pad for the system bars and
-        // lift the content above the IME ourselves (platform insets, no AndroidX).
+        // Pad the root for the system bars AND the IME together. getInsets(systemBars |
+        // ime) returns the max per edge, so the bottom padding is the keyboard height
+        // when it's up and the nav-bar height otherwise: the weight-1 ListView shrinks
+        // from the bottom — staying FULLY on-screen and scrollable (translating it
+        // instead pushed the top of a long list off the top edge) — and the prompt
+        // rides up just above the keyboard.
+        //
+        // Deliberately NO WindowInsetsAnimation callback: applying the inset once, when
+        // it settles, keeps the ListView from re-laying-out on every animation frame —
+        // that per-frame relayout is what made the list blink/redraw before. The prompt
+        // moves in a single step rather than tracking the slide; a fair trade for a
+        // launcher's command line, and it never clips or flickers.
         val pad = 12.dp()
-        // Only the system bars pad the root, and ONLY they size the layout. The IME
-        // is applied as a translationY lift, never as padding: padding would shrink
-        // the weight-1 ListView, and a ListView re-runs a full layoutChildren() on
-        // every size change — across the many frames of the keyboard slide that reads
-        // as the favorites list blinking out and redrawing. Translating the whole
-        // root up instead keeps the ListView at a constant size (no relayout) while
-        // the prompt still rides up to sit just above the keyboard. Shared by the
-        // static apply pass and the IME animation callback so the two never disagree.
-        val applyInsets = { v: View, insets: WindowInsets ->
-            val bars = insets.getInsets(WindowInsets.Type.systemBars())
-            val imeBottom = insets.getInsets(WindowInsets.Type.ime()).bottom
-            v.setPadding(bars.left + pad, bars.top + pad, bars.right + pad, bars.bottom + pad)
-            // The IME inset is measured from the screen bottom and already spans the
-            // nav-bar region we've padded for, so subtract it to avoid lifting twice.
-            v.translationY = -maxOf(0, imeBottom - bars.bottom).toFloat()
-        }
         root.setOnApplyWindowInsetsListener { v, insets ->
-            applyInsets(v, insets)
+            val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime())
+            v.setPadding(i.left + pad, i.top + pad, i.right + pad, i.bottom + pad)
             insets
         }
-        // Without an animation callback the IME inset only lands in the pass above
-        // once the keyboard has fully settled, so the content jumps to its raised
-        // spot in a single frame. Driving the same lift from onProgress makes it
-        // track the keyboard as it slides. DISPATCH_MODE_STOP holds the static pass
-        // above back until the animation ends (so the two never fight mid-slide),
-        // then it runs once with the final insets. Platform API (min 30); minSdk 36.
-        root.setWindowInsetsAnimationCallback(
-            object : WindowInsetsAnimation.Callback(
-                WindowInsetsAnimation.Callback.DISPATCH_MODE_STOP
-            ) {
-                override fun onProgress(
-                    insets: WindowInsets,
-                    runningAnimations: MutableList<WindowInsetsAnimation>,
-                ): WindowInsets {
-                    applyInsets(root, insets)
-                    return insets
-                }
-            }
-        )
 
         adapter = AppListAdapter()
         listView.adapter = adapter
