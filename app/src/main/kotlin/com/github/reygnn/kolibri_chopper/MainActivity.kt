@@ -29,6 +29,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
 import android.widget.BaseAdapter
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.MultiAutoCompleteTextView
@@ -177,9 +178,12 @@ class MainActivity : Activity() {
         // covers the prompt. So we own the insets and pad for the IME ourselves (below).
         window.setDecorFitsSystemWindows(false)
 
+        // The app list's root is now TRANSPARENT — the real AMOLED black moved onto
+        // the wallpaper view behind it (see the FrameLayout wrap below), so the
+        // backdrop motif shows through wherever a row doesn't.
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFF000000.toInt())
+            setBackgroundColor(0x00000000)
             fitsSystemWindows = false
         }
 
@@ -299,7 +303,20 @@ class MainActivity : Activity() {
         adapter = AppListAdapter()
         listView.adapter = adapter
 
-        setContentView(root)
+        // 0.3 wallpaper: wrap the app list in a FrameLayout with the static block-art
+        // backdrop BEHIND it. The wallpaper view fills the whole screen edge-to-edge
+        // (no inset padding — it paints behind the system bars too); the app-list root
+        // keeps the systemBars|ime inset listener above. The root is transparent, so
+        // the dimmed motif shows through. First 0.3 test slice: one motif, forced on
+        // (no ~art command / no persistence yet).
+        val wallpaper = AsciiWallpaperView(this).apply {
+            setMotif(AsciiArt.DOUBLE_HAPPINESS)
+        }
+        val content = FrameLayout(this).apply {
+            addView(wallpaper, FrameLayout.LayoutParams(MATCH, MATCH))
+            addView(root, FrameLayout.LayoutParams(MATCH, MATCH))
+        }
+        setContentView(content)
 
         // Back on a HOME launcher must not finish the activity — we're the home
         // screen, so the platform's default callback (routed here on targetSdk 36
