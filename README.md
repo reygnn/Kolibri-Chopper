@@ -32,8 +32,8 @@ a launcher does not strictly need and see how small the APK gets.
 
 Two lines are maintained; pick whichever fits.
 
-- **0.2.x (this line)** — adds favorites, hidden apps and custom names, stored in
-  `chopper.json`. App enumeration is single-user only.
+- **0.2.x (this line)** — adds favorites (with reordering), hidden apps and custom
+  names, stored in `chopper.json`. App enumeration is single-user only.
 - **0.1.x** — deliberately barebones and staying that way: no config, no
   persistence, just list, filter and launch. It is also the only line that carries
   the `LauncherApps` multi-user listing (work-profile, cloned and private-space
