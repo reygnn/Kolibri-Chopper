@@ -14,6 +14,7 @@ import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
 import android.text.Editable
+import android.text.InputFilter
 import android.text.InputType
 import android.text.TextUtils
 import android.text.TextWatcher
@@ -667,6 +668,16 @@ class MainActivity : Activity() {
             hint = getString(R.string.hint_rename_tags)
             isSingleLine = true
             inputType = noSuggest
+            // Force tags lowercase as typed, via the same ROOT fold used to store and
+            // match them — so the field shows exactly what gets saved, regardless of
+            // whether the keyboard's shift/auto-capitalize is on. (inputType requests no
+            // caps, but that hint isn't honored by every keyboard; the filter is the
+            // guarantee.) Only the tag field is folded — a custom name keeps its case.
+            filters = arrayOf(InputFilter { source, start, end, _, _, _ ->
+                val sub = source.subSequence(start, end).toString()
+                val folded = LauncherLogic.foldLabel(sub)
+                if (folded == sub) null else folded  // null = accept unchanged
+            })
             // Autocomplete the comma-separated token being typed from the already-
             // defined tags: type "g" and "games" is offered. A brand-new tag can still
             // be typed freely — the suggestions are additive. CommaTokenizer scopes the
