@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.system.ErrnoException
 import android.system.Os
@@ -24,10 +25,12 @@ import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import android.widget.ArrayAdapter
 import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.MultiAutoCompleteTextView
 import android.widget.TextView
 import android.widget.Toast
 import android.window.OnBackInvokedDispatcher
@@ -637,12 +640,36 @@ class MainActivity : Activity() {
             inputType = noSuggest
             setSelection(text.length)
         }
-        val tagsInput = EditText(this).apply {
+        val tagsInput = MultiAutoCompleteTextView(this).apply {
             // Show the stored tags back as a plain comma-separated list to edit.
             setText(cfg.tags[key]?.joinToString(", ").orEmpty())
             hint = getString(R.string.hint_rename_tags)
             isSingleLine = true
             inputType = noSuggest
+            // Autocomplete the comma-separated token being typed from the already-
+            // defined tags: type "g" and "games" is offered. A brand-new tag can still
+            // be typed freely — the suggestions are additive. CommaTokenizer scopes the
+            // completion to the current token so the others are left intact.
+            setTokenizer(MultiAutoCompleteTextView.CommaTokenizer())
+            threshold = 1
+            // Own dark, monospace dropdown so it fits the terminal look instead of the
+            // default light Material popup. getView is fully overridden, so the unused
+            // resource id passed to ArrayAdapter is never inflated.
+            setAdapter(object : ArrayAdapter<String>(
+                this@MainActivity, android.R.layout.simple_list_item_1, LauncherLogic.allTags(cfg.tags)
+            ) {
+                override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                    val tv = (convertView as? TextView) ?: TextView(this@MainActivity).apply {
+                        typeface = Typeface.MONOSPACE
+                        setTextColor(fgColor)
+                        textSize = 18f
+                        setPadding(12.dp(), 8.dp(), 12.dp(), 8.dp())
+                    }
+                    tv.text = getItem(position)
+                    return tv
+                }
+            })
+            setDropDownBackgroundDrawable(ColorDrawable(0xFF000000.toInt()))
         }
         val pad = 12.dp()
         val container = LinearLayout(this).apply {

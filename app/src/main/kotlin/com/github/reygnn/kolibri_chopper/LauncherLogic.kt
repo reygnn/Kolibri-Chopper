@@ -136,6 +136,15 @@ internal object LauncherLogic {
         raw.split(',').map { foldLabel(it.trim()) }.filter { it.isNotEmpty() }.distinct()
 
     /**
+     * Every distinct tag across all apps, sorted — the suggestion pool for the tag
+     * input's autocomplete (and later the "#" tag overview). Values in [tags] are
+     * already folded (see [parseTags]/ConfigJson), so this only flattens, de-dupes
+     * and sorts. Sorted so the suggestion list is stable and alphabetical.
+     */
+    fun allTags(tags: Map<String, List<String>>): List<String> =
+        tags.values.flatten().distinct().sorted()
+
+    /**
      * The "#" filter: apps carrying a tag that matches [needle]. [needle] is folded
      * (ROOT) and prefix-matched against each app's tags, so "#wo" finds a "work"-tagged
      * app; an empty needle (bare "#") returns every tagged app as an overview. [tags]

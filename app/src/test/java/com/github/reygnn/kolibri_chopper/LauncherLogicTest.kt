@@ -267,6 +267,21 @@ class LauncherLogicTest {
         assertEquals(emptyList<String>(), LauncherLogic.parseTags(",, ,"))
     }
 
+    // ---- allTags ------------------------------------------------------------
+
+    @Test fun `allTags flattens, de-duplicates and sorts across apps`() {
+        val tags = mapOf(
+            "a" to listOf("work", "fun"),
+            "b" to listOf("games", "work"),   // "work" shared with a
+            "c" to emptyList(),
+        )
+        assertEquals(listOf("fun", "games", "work"), LauncherLogic.allTags(tags))
+    }
+
+    @Test fun `allTags on no tags is empty`() {
+        assertEquals(emptyList<String>(), LauncherLogic.allTags(emptyMap()))
+    }
+
     // ---- tagged -------------------------------------------------------------
 
     private val taggedFixture = mapOf(
