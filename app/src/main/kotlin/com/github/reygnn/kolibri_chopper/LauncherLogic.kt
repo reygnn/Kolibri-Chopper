@@ -136,22 +136,33 @@ internal object LauncherLogic {
         raw.split(',').map { foldLabel(it.trim()) }.filter { it.isNotEmpty() }.distinct()
 
     /**
-     * Every distinct tag across all apps, sorted — the suggestion pool for the tag
-     * input's autocomplete (and later the "#" tag overview). Values in [tags] are
-     * already folded (see [parseTags]/ConfigJson), so this only flattens, de-dupes
-     * and sorts. Sorted so the suggestion list is stable and alphabetical.
+     * Every distinct tag ever defined, sorted — the suggestion pool for the tag
+     * input's autocomplete. Includes tags whose apps are currently uninstalled, so a
+     * known tag can still be reused. Values in [tags] are already folded (see
+     * [parseTags]/ConfigJson), so this only flattens, de-dupes and sorts.
      */
     fun allTags(tags: Map<String, List<String>>): List<String> =
         tags.values.flatten().distinct().sorted()
 
     /**
-     * The "#" filter: apps carrying a tag that matches [needle]. [needle] is folded
-     * (ROOT) and prefix-matched against each app's tags, so "#wo" finds a "work"-tagged
-     * app; an empty needle (bare "#") returns every tagged app as an overview. [tags]
-     * is keyed by app key and assumed already folded (see [parseTags]). Apps keep their
-     * incoming order; a tag pointing at an app not in [all] (uninstalled) drops out
-     * because we iterate [all]. Hidden apps are intentionally NOT excluded — a tag is
-     * an explicit choice, the same way favoriting overrides hiding.
+     * Tags carried by at least one currently-installed app, sorted — the bare-"#"
+     * overview list. Unlike [allTags], this iterates [all] and so drops "ghost" tags
+     * whose only apps have been uninstalled, guaranteeing every listed tag drills into
+     * a non-empty result. Tag values are already folded (see [parseTags]).
+     */
+    fun <T : Ordered> tagsInUse(all: List<T>, tags: Map<String, List<String>>): List<String> =
+        all.flatMap { tags[it.key].orEmpty() }.distinct().sorted()
+
+    /**
+     * The "#" filter: apps carrying a tag that PREFIX-matches [needle]. [needle] is
+     * folded (ROOT), so "#gam" pulls in every app under a tag starting with "gam"
+     * (e.g. "games") — typing a partial shows the apps of all matching tags, which is
+     * the practical behaviour for a launcher. An empty needle returns every tagged
+     * app. [tags] is keyed by app key and assumed already folded (see [parseTags]).
+     * Apps keep their incoming order; a tag pointing at an app not in [all]
+     * (uninstalled) drops out because we iterate [all]. Hidden apps are intentionally
+     * NOT excluded — a tag is an explicit choice, the same way favoriting overrides
+     * hiding.
      */
     fun <T : Ordered> tagged(all: List<T>, tags: Map<String, List<String>>, needle: String): List<T> {
         val n = foldLabel(needle)

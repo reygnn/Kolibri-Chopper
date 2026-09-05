@@ -282,6 +282,23 @@ class LauncherLogicTest {
         assertEquals(emptyList<String>(), LauncherLogic.allTags(emptyMap()))
     }
 
+    // ---- tagsInUse ----------------------------------------------------------
+
+    @Test fun `tagsInUse lists only tags borne by an installed app, sorted`() {
+        val tags = mapOf(
+            "a" to listOf("work", "fun"),
+            "b" to listOf("games"),
+            "gone" to listOf("ghost"),   // app not in the installed list
+        )
+        // only a and b are installed; "ghost" is dropped, result sorted + distinct.
+        assertEquals(listOf("fun", "games", "work"), LauncherLogic.tagsInUse(rows("a", "b"), tags))
+    }
+
+    @Test fun `tagsInUse is empty when no installed app is tagged`() {
+        val tags = mapOf("gone" to listOf("ghost"))
+        assertEquals(emptyList<String>(), LauncherLogic.tagsInUse(rows("a", "b"), tags))
+    }
+
     // ---- tagged -------------------------------------------------------------
 
     private val taggedFixture = mapOf(
@@ -316,9 +333,10 @@ class LauncherLogicTest {
         assertEquals(listOf("a"), LauncherLogic.tagged(rows("a", "b"), tags, "work").keys())
     }
 
-    @Test fun `tagged prefix-match distinguishes overlapping tags`() {
+    @Test fun `tagged prefix-match includes tags sharing the prefix`() {
         val tags = mapOf("a" to listOf("work"), "b" to listOf("workout"))
-        // "work" is a prefix of both -> both match; "worko" only prefixes "workout".
+        // "work" prefixes both "work" and "workout" -> both; "worko" only "workout".
+        // This is intentional: "#gam" should surface every app under a gam-ish tag.
         assertEquals(listOf("a", "b"), LauncherLogic.tagged(rows("a", "b"), tags, "work").keys())
         assertEquals(listOf("b"), LauncherLogic.tagged(rows("a", "b"), tags, "worko").keys())
     }

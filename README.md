@@ -16,9 +16,11 @@ a launcher does not strictly need and see how small the APK gets.
   - `*` — the full drawer: everything except hidden apps, **but a favorite is
     always kept even when also hidden** (favoriting overrides hiding, so a starred
     app is never trimmed from the default views)
-  - `#[text]` — tag filter: apps whose tags match `text` (a bare `#` lists every
-    tagged app). Tap or **Enter** to launch. Tags are assigned in the long-press
-    dialog; a tagged app shows here even when hidden
+  - `#` — lists the tags in use; tap one (or **Enter** on the nearest) to drill into
+    that tag's apps
+  - `#text` — tag filter: the apps under every tag starting with `text` (so `#gam`
+    finds your `games` apps). Tap or **Enter** to launch. Tags are assigned in the
+    long-press dialog; a tagged app shows here even when hidden
   - `-[text]` — edit hidden: tap a row to toggle `[x]`, saved immediately
   - `![text]` — edit favorites: tap a row to toggle `[x]`, saved immediately
   - `!!` — reorder favorites: tap a row to pick it up (marked `»`), tap another

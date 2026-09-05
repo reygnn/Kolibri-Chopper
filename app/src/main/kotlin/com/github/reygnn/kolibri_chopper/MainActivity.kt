@@ -53,8 +53,9 @@ import java.util.concurrent.RejectedExecutionException
  *   ""      normal: favorites only (or the drawer if none are set yet)
  *   text    normal: substring search across ALL apps (hidden included)
  *   *       normal: the full app drawer (every non-hidden app)
- *   #[text] tag filter: apps whose tags match [text] (bare # = all tagged),
- *           tap/Enter launches; tags are assigned via the long-press dialog
+ *   #       tags: lists the tags in use; tap one to drill into its apps
+ *   #text   tag filter: apps under every tag prefix-matching [text], tap/Enter
+ *           launches. Tags are assigned via the long-press dialog
  *   -[text] edit hidden:    tap a row to toggle its [x], persisted immediately
  *   ![text] edit favorites: tap a row to toggle its [x], persisted immediately
  *   !!      reorder favorites: tap a row to pick it up (marked »), tap another
@@ -86,6 +87,13 @@ class MainActivity : Activity() {
         override val key: String = component.flattenToString()
     }
 
+    // A rendered list row. Almost always an app; in the bare-"#" tag overview the
+    // list instead shows tag names, and tapping one drills into that tag's apps.
+    // Keeping both in one list lets the single ListView/adapter serve either.
+    private sealed interface Row
+    private data class AppRow(val entry: AppEntry) : Row
+    private data class TagRow(val name: String) : Row
+
     // NB: not named `foreground` — that collides with View.foreground (a
     // Drawable) inside the apply{} blocks below and hides this Int.
     private val fgColor = 0xFFD4D4D4.toInt()     // pleasant light gray
@@ -106,7 +114,9 @@ class MainActivity : Activity() {
     private var reorderPick: String? = null
 
     private var allApps: List<AppEntry> = emptyList()
-    private var shownApps: List<AppEntry> = emptyList()
+    // What the ListView currently shows: app rows in every mode, or tag-name rows in
+    // the bare-"#" overview. Reassigned only by applyFilter.
+    private var shown: List<Row> = emptyList()
 
     // The "?" mode: the component keys of the most recently launched apps, newest
     // first. Deliberately IN MEMORY ONLY — never written to chopper.json — so it
@@ -180,21 +190,27 @@ class MainActivity : Activity() {
             setOnItemClickListener { _, _, position, _ ->
                 // getOrNull, not [position]: a background load can complete on the
                 // main thread between the frame the user tapped and this click
-                // message running, shrinking shownApps — a stale position would then
+                // message running, shrinking shown — a stale position would then
                 // throw. A HOME app must never crash, so drop the tap instead.
-                val entry = shownApps.getOrNull(position) ?: return@setOnItemClickListener
-                when (mode) {
-                    Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER -> launch(entry)
-                    Mode.HIDDEN_EDIT -> toggle(cfg.hidden, entry.key)
-                    Mode.FAV_EDIT    -> toggle(cfg.favorites, entry.key)
-                    Mode.FAV_REORDER -> reorderTap(entry.key)
+                when (val row = shown.getOrNull(position)) {
+                    // A tag row (bare "#") drills into that tag's apps by rewriting the
+                    // prompt — the TextWatcher then re-filters through applyFilter.
+                    is TagRow -> prompt.setText("#${row.name}")
+                    is AppRow -> when (mode) {
+                        Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER -> launch(row.entry)
+                        Mode.HIDDEN_EDIT -> toggle(cfg.hidden, row.entry.key)
+                        Mode.FAV_EDIT    -> toggle(cfg.favorites, row.entry.key)
+                        Mode.FAV_REORDER -> reorderTap(row.entry.key)
+                    }
+                    null -> {}  // stale position
                 }
             }
-            // Long-press: set/clear a custom name for the app (any mode).
+            // Long-press: set/clear a custom name (and tags) for an app. Tag rows have
+            // no long-press action.
             setOnItemLongClickListener { _, _, position, _ ->
-                val entry = shownApps.getOrNull(position)
-                    ?: return@setOnItemLongClickListener false  // stale position: not consumed
-                promptRename(entry)
+                val row = shown.getOrNull(position) as? AppRow
+                    ?: return@setOnItemLongClickListener false  // tag row or stale: not consumed
+                promptRename(row.entry)
                 true
             }
         }
@@ -243,11 +259,16 @@ class MainActivity : Activity() {
                     // sitting directly above the prompt — the natural Enter target.
                     // (Swap to firstOrNull if you'd rather Enter pick the
                     // alphabetically-first match instead.)
-                    // The read modes launch the row nearest the command line: for "?"
-                    // the most recent app, for "#" the nearest tag match. (edit modes
-                    // fall through to the prompt-clearing "done" gesture below.)
+                    // The read modes act on the row nearest the command line: launch it
+                    // if it's an app, or — in the bare-"#" tag overview — drill into the
+                    // nearest tag. (edit modes fall through to the prompt-clearing
+                    // "done" gesture below.)
                     mode == Mode.NORMAL || mode == Mode.RECENTS || mode == Mode.TAG_FILTER ->
-                        shownApps.lastOrNull()?.let { launch(it) }
+                        when (val last = shown.lastOrNull()) {
+                            is AppRow -> launch(last.entry)
+                            is TagRow -> prompt.setText("#${last.name}")
+                            null -> {}
+                        }
                     else -> prompt.setText("")
                 }
                 true
@@ -395,12 +416,12 @@ class MainActivity : Activity() {
         super.onNewIntent(intent)
         setIntent(intent)  // keep getIntent() in sync with the latest launch intent
         // setText("") fires the TextWatcher synchronously, so applyFilter has
-        // already refreshed shownApps (and reset mode to NORMAL) by the time we
+        // already refreshed the shown rows (and reset mode to NORMAL) by the time we
         // scroll to the last (bottom-most, nearest the prompt) row below.
         prompt.setText("")
         // Last valid index is size - 1; guard the empty case (no apps loaded yet or
         // everything hidden), where size - 1 would be an invalid -1.
-        if (shownApps.isNotEmpty()) listView.setSelection(shownApps.size - 1)
+        if (shown.isNotEmpty()) listView.setSelection(shown.size - 1)
         hideKeyboard()
     }
 
@@ -791,7 +812,13 @@ class MainActivity : Activity() {
         // A pickup belongs to a single reorder session: drop it the moment we're no
         // longer in FAV_REORDER, so nothing stale survives into another mode.
         if (mode != Mode.FAV_REORDER) reorderPick = null
-        shownApps = when (mode) {
+        // "#" is the one mode that can show tag rows instead of app rows: a bare "#"
+        // lists the in-use tags (tap one to drill into its apps); once any text follows
+        // it, it shows the apps of every tag PREFIX-matching that text. Every other
+        // mode maps its app list straight to AppRow.
+        shown = if (mode == Mode.TAG_FILTER && q.substring(1).isBlank()) {
+            LauncherLogic.tagsInUse(allApps, cfg.tags).map(::TagRow)
+        } else when (mode) {
             // Reorder lists exactly the current favorites, in their stored order —
             // any text after "!!" is ignored (filtering would scramble the positions
             // the reorder acts on). Nothing to show when none are set.
@@ -799,7 +826,7 @@ class MainActivity : Activity() {
             // Recents lists the last-launched apps (newest nearest the prompt). Like
             // reorder, any text after "?" is ignored — the list is short and fixed.
             Mode.RECENTS -> LauncherLogic.recentsInDisplayOrder(allApps, recentKeys)
-            // "#": apps whose tags match the text after it (bare "#" lists all tagged).
+            // "#" with text after it: apps whose tags match that text (prefix).
             Mode.TAG_FILTER -> LauncherLogic.tagged(allApps, cfg.tags, q.substring(1).trim())
             // Edit modes list EVERY app (so anything can be toggled), narrowed by
             // whatever follows the sigil. Membership shows as [x]/[ ] in getView.
@@ -816,7 +843,7 @@ class MainActivity : Activity() {
                 // views, it doesn't make an app unlaunchable.
                 else -> LauncherLogic.search(allApps, q)
             }
-        }
+        }.map(::AppRow)
         // An empty "?" means nothing has been launched since this process started —
         // i.e. we just cold-started (or it's a fresh install). The recents cache is
         // in memory only and low-RAM devices kill the launcher process often, so warn
@@ -879,11 +906,13 @@ class MainActivity : Activity() {
     private fun Int.dp(): Int = (this * resources.displayMetrics.density).toInt()
 
     private inner class AppListAdapter : BaseAdapter() {
-        override fun getCount(): Int = shownApps.size
-        override fun getItem(position: Int): Any = shownApps[position]
+        override fun getCount(): Int = shown.size
+        override fun getItem(position: Int): Any = shown[position]
         override fun getItemId(position: Int): Long = position.toLong()
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+            // Tag rows and app rows are the same monospace TextView, so a recycled view
+            // is reused across both freely.
             val tv = (convertView as? TextView) ?: TextView(this@MainActivity).apply {
                 typeface = Typeface.MONOSPACE
                 setTextColor(fgColor)
@@ -894,7 +923,19 @@ class MainActivity : Activity() {
                 val v = 10.dp()
                 setPadding(0, v, 0, v)
             }
-            val entry = shownApps[position]
+            when (val row = shown[position]) {
+                // Tag overview (bare "#"): plain tag name; a screen reader reads it fine,
+                // so clear any stale edit-mode description from the recycled view.
+                is TagRow -> {
+                    tv.text = row.name
+                    tv.contentDescription = null
+                }
+                is AppRow -> bindAppRow(tv, row.entry)
+            }
+            return tv
+        }
+
+        private fun bindAppRow(tv: TextView, entry: AppEntry) {
             val key = entry.key
             // In an edit mode each row carries a monospace checkbox glyph; "[ ] "
             // and "[x] " are the same width, so labels stay column-aligned.
@@ -930,7 +971,6 @@ class MainActivity : Activity() {
                 )
                 Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER -> null
             }
-            return tv
         }
     }
 
