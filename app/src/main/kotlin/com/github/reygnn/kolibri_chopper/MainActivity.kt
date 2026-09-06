@@ -28,6 +28,7 @@ import android.text.TextWatcher
 import android.util.Log
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -151,6 +152,14 @@ class MainActivity : Activity() {
     // instead of re-parsing the prompt. Recomputed by applyFilter on every keystroke.
     private var tagEditTag: String? = null
 
+    // How many times [shown] has been replaced, and what that counter read when the
+    // finger last went down. AbsListView POSTS the click, and it only drops a pending one
+    // while its own mDataChanged flag is up — once a layout pass has run, the flag is
+    // clear again and the click lands on whatever row has since moved into that slot.
+    // Comparing the two makes a tap act only on the list the user actually touched.
+    private var shownGeneration = 0
+    private var touchDownGeneration = NO_TOUCH
+
     private var allApps: List<AppEntry> = emptyList()
     // What the ListView currently shows: app rows in every mode, or tag-name rows in
     // the bare-"#" overview. Reassigned only by applyFilter.
@@ -225,7 +234,27 @@ class MainActivity : Activity() {
             divider = null  // setDivider(null) already zeroes the divider height
             isVerticalScrollBarEnabled = false
             isStackFromBottom = true
+            // Record which list the finger went down on. Returns false without fail: this
+            // must observe the gesture, never consume it — the ListView still has to do
+            // its own scrolling and click detection.
+            @Suppress("ClickableViewAccessibility")
+            setOnTouchListener { _, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                    touchDownGeneration = shownGeneration
+                }
+                false
+            }
             setOnItemClickListener { _, _, position, _ ->
+                // Consume the marker: each touch guards exactly the one click it leads to.
+                val touched = touchDownGeneration
+                touchDownGeneration = NO_TOUCH
+                // NO_TOUCH means this click did not follow a touch we saw — TalkBack and
+                // other accessibility services invoke the click action directly, with no
+                // MotionEvent at all. There is no stale-position risk in that case, and
+                // dropping it would make the launcher unusable with a screen reader.
+                if (touched != NO_TOUCH && touched != shownGeneration) {
+                    return@setOnItemClickListener
+                }
                 // getOrNull, not [position]: a background load can complete on the
                 // main thread between the frame the user tapped and this click
                 // message running, shrinking shown — a stale position would then
@@ -495,6 +524,11 @@ class MainActivity : Activity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)  // keep getIntent() in sync with the latest launch intent
+        // HOME while already home is a "reset to a clean prompt" gesture, so a rename
+        // dialog left open has no business surviving it: the list underneath jumps back to
+        // favorites while a modal for some other row stays on top, and confirming it would
+        // then apply a rename the user has visually left behind.
+        renameDialog?.dismiss()
         // setText("") fires the TextWatcher synchronously, so applyFilter has
         // already refreshed the shown rows (and reset mode to NORMAL) by the time we
         // scroll to the last (bottom-most, nearest the prompt) row below.
@@ -1187,6 +1221,9 @@ class MainActivity : Activity() {
                 else -> LauncherLogic.search(allApps, q)
             }
         }.map(::AppRow)
+        // Any replacement of shown invalidates a tap already in flight (see the click
+        // listener). Bumped here, in the ONE place shown is assigned.
+        shownGeneration++
         // An empty "?" means nothing has been launched since this process started —
         // i.e. we just cold-started (or it's a fresh install). The recents cache is
         // in memory only and low-RAM devices kill the launcher process often, so warn
@@ -1346,5 +1383,7 @@ class MainActivity : Activity() {
         const val BACKUP_NAME = "chopper.json"
         const val PRE_RESTORE_NAME = "chopper-pre-restore.json"
         const val REQ_RESTORE = 1
+        // "no touch has been seen since the last click" — see the item-click listener.
+        const val NO_TOUCH = -1
     }
 }
