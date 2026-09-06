@@ -359,9 +359,14 @@ class MainActivity : Activity() {
         onBackInvokedDispatcher.registerOnBackInvokedCallback(
             OnBackInvokedDispatcher.PRIORITY_DEFAULT
         ) {
+            // Drop the keyboard FIRST, and unconditionally: focusing the prompt raises the
+            // IME without putting any text into it, so on an empty prompt the old
+            // isNotEmpty-guarded version skipped hideKeyboard() entirely. Since this
+            // callback swallows every back press, that left no way to dismiss the keyboard
+            // with back at all.
+            hideKeyboard()
             if (prompt.text?.isNotEmpty() == true) {
                 prompt.setText("")   // TextWatcher -> applyFilter resets mode to NORMAL
-                hideKeyboard()
             }
         }
     }
@@ -452,12 +457,14 @@ class MainActivity : Activity() {
      * Dropping a task once the executor is down is fine: the activity is going
      * away, so an unwritten save or a skipped reload no longer matters.
      */
-    private fun submitIo(task: Runnable) {
-        if (ioExecutor.isShutdown) return
-        try {
+    private fun submitIo(task: Runnable): Boolean {
+        if (ioExecutor.isShutdown) return false
+        return try {
             ioExecutor.execute(task)
+            true
         } catch (e: RejectedExecutionException) {
             Log.w("Chopper", "IO task rejected (executor shutting down)", e)
+            false
         }
     }
 
@@ -529,9 +536,19 @@ class MainActivity : Activity() {
      * toggle/rename tap never blocks on disk. rotateBackup = true: a normal save
      * keeps a last-known-good .bak mirror (see [writeConfigFile]).
      */
-    private fun saveConfig() {
+    private fun saveConfig(onDone: ((Boolean) -> Unit)? = null) {
         val payload = ConfigJson.serialize(cfg)
-        submitIo { writeConfigFile(payload, rotateBackup = true) }
+        // [onDone] exists for "~save", which has to tell the user something true. Every
+        // other caller saves as a side effect of a tap that already shows its result on
+        // screen, and passes nothing.
+        val accepted = submitIo {
+            val ok = writeConfigFile(payload, rotateBackup = true)
+            onDone?.let { cb -> runOnUiThread { cb(ok) } }
+        }
+        // Refused outright (the IO thread is shutting down): nothing will ever run, so
+        // report the failure here rather than leaving the caller waiting on a callback
+        // that cannot arrive.
+        if (!accepted) onDone?.invoke(false)
     }
 
     /**
@@ -543,9 +560,12 @@ class MainActivity : Activity() {
     private fun runCommand(command: Command) {
         when (command) {
             Command.RELOAD -> refreshApps(reloadConfig = true)
-            Command.SAVE -> {
-                saveConfig()
-                toast(getString(R.string.toast_saved))
+            // Toast from the IO callback, on the real result — NOT straight after
+            // submitting. saveConfig only queues the write; announcing success before the
+            // write is even attempted is exactly the "save you cannot see happen" this
+            // command exists to rule out.
+            Command.SAVE -> saveConfig { ok ->
+                toast(getString(if (ok) R.string.toast_saved else R.string.toast_save_failed))
             }
             Command.BACKUP -> exportConfig(BACKUP_NAME)
             Command.RESTORE -> restoreConfig()
@@ -585,60 +605,75 @@ class MainActivity : Activity() {
 
     /**
      * Publish [payload] into Download/[BACKUP_DIR] as [name] via MediaStore. Needs no
-     * storage permission: inserting into the Downloads collection is always allowed,
-     * and an app may always rewrite what it wrote itself.
+     * storage permission: writing into the Downloads collection is always allowed, and an
+     * app may always rewrite what it wrote itself.
      *
-     * Overwrites IN PLACE when the entry already exists ("wt" truncates), rather than
-     * inserting again — a second insert under a taken DISPLAY_NAME does not replace it,
-     * MediaStore silently renames it to "chopper (1).json" and the promise of a single
-     * backup quietly falls apart. On the first write there is nothing to reuse, so the
-     * insert path brackets it with IS_PENDING and nothing can observe a half-written
-     * file.
+     * Temp-write then publish, the same shape [writeConfigFile] uses for chopper.json and
+     * for the same reason. Opening the live backup with "wt" truncates it AT OPEN, so a
+     * write that then failed — ENOSPC, or the OS reaping a backgrounded HOME app mid-write
+     * — used to leave a torso where the backup had been. Unlike chopper.json in filesDir
+     * this file has no .bak beside it: it is the only off-device copy, so it must never be
+     * destroyed before its replacement is complete on disk.
+     *
+     * Sequence: write the payload into a PENDING temp row and fsync it -> delete the old
+     * row -> rename the temp onto its name. A crash in the publish window leaves the
+     * COMPLETE new payload under "<name>.tmp" rather than a truncated backup, and the next
+     * run clears that temp away. IS_PENDING keeps the half-written temp invisible to file
+     * managers, and is cleared as part of the same update that renames it — so a row can
+     * no longer be stranded pending, invisible to the user and on the clock for
+     * MediaStore's pending-expiry sweep.
      *
      * Never throws — a failed backup is reported and forgotten, it must not take a HOME
      * app down with it. Returns whether the file was published.
      */
     private fun writeToDownloads(name: String, payload: String): Boolean {
-        val existing = findOwnDownload(name)
-        if (existing != null) {
-            return try {
-                contentResolver.openOutputStream(existing, "wt")
-                    ?.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
-                    ?: throw IOException("no output stream for $existing")
-                true
-            } catch (e: Exception) {
-                Log.w("Chopper", "backup: rewriting $name failed", e)
-                false
-            }
-        }
-        val pending = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
-            put(
-                MediaStore.MediaColumns.RELATIVE_PATH,
-                "${Environment.DIRECTORY_DOWNLOADS}/$BACKUP_DIR",
-            )
-            put(MediaStore.MediaColumns.IS_PENDING, 1)
-        }
-        var uri: Uri? = null
+        val tmpName = "$name.tmp"
+        var tmp: Uri? = null
         return try {
-            uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, pending)
-                ?: throw IOException("MediaStore refused an entry for $name")
-            val out = contentResolver.openOutputStream(uri)
-                ?: throw IOException("no output stream for $uri")
-            out.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+            // A temp left behind by a previous crash would otherwise collide, and
+            // MediaStore resolves a taken DISPLAY_NAME by inventing "…(1)" rather than
+            // failing — which is how you end up with a folder full of near-duplicates.
+            findOwnDownload(tmpName)?.let { contentResolver.delete(it, null, null) }
+            tmp = contentResolver.insert(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, tmpName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
+                    put(
+                        MediaStore.MediaColumns.RELATIVE_PATH,
+                        "${Environment.DIRECTORY_DOWNLOADS}/$BACKUP_DIR",
+                    )
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                },
+            ) ?: throw IOException("MediaStore refused an entry for $tmpName")
+            // fsync the CONTENTS before publishing, exactly as writeConfigFile does: the
+            // rename must not be able to reach disk ahead of the bytes it publishes.
+            contentResolver.openFileDescriptor(tmp, "w")?.use { pfd ->
+                val out = FileOutputStream(pfd.fileDescriptor)
+                out.write(payload.toByteArray(Charsets.UTF_8))
+                out.flush()
+                Os.fsync(pfd.fileDescriptor)
+            } ?: throw IOException("no descriptor for $tmp")
+            // Publish. Deleting the old row first because a rename onto a taken name would
+            // again produce "…(1)" instead of replacing it. This also sweeps away a row
+            // stranded pending by an older crash, since a query returns our own pending
+            // rows too.
+            findOwnDownload(name)?.let { contentResolver.delete(it, null, null) }
             contentResolver.update(
-                uri,
-                ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
+                tmp,
+                ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                    put(MediaStore.MediaColumns.IS_PENDING, 0)
+                },
                 null,
                 null,
             )
             true
         } catch (e: Exception) {
             Log.w("Chopper", "backup to Downloads failed", e)
-            // Drop the still-pending row rather than leaving an invisible stub in the
-            // user's Downloads forever.
-            uri?.let { runCatching { contentResolver.delete(it, null, null) } }
+            // Drop the temp rather than leaving an invisible stub in the user's Downloads.
+            // The previous backup is untouched at every point this can be reached.
+            tmp?.let { runCatching { contentResolver.delete(it, null, null) } }
             false
         }
     }
@@ -826,11 +861,11 @@ class MainActivity : Activity() {
      * just replaces the bad primary and leaves .bak untouched, so both end up holding
      * the config.
      */
-    private fun writeConfigFile(payload: String, rotateBackup: Boolean) {
+    private fun writeConfigFile(payload: String, rotateBackup: Boolean): Boolean {
         val tmp = File(filesDir, "$CONFIG_FILE.tmp")
         val dst = File(filesDir, CONFIG_FILE)
         val bak = File(filesDir, "$CONFIG_FILE.bak")
-        try {
+        return try {
             // (1) Write to the temp file and force its bytes onto disk BEFORE anything
             //     is published, so a rename can never expose contents that aren't there.
             FileOutputStream(tmp).use { fos ->
@@ -880,8 +915,10 @@ class MainActivity : Activity() {
 
             // (4) Make the renames themselves durable (see the method comment above).
             fsyncDir(filesDir)
+            true
         } catch (e: Exception) {
             Log.w("Chopper", "config save failed", e)
+            false
         }
     }
 

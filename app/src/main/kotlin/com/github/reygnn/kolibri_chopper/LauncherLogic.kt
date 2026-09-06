@@ -55,9 +55,10 @@ internal object LauncherLogic {
      * the abbreviation resolver and the exact parser can never drift apart — adding a
      * command here is the whole change.
      *
-     * Ordered harmless-first: the two that only read or write our own file, then the
-     * two that replace the live config. The overview renders them in this order, so
-     * the destructive pair sits nearest the prompt last, not first.
+     * Ordered harmless-first: ~load and ~save only touch our own chopper.json, ~backup
+     * only writes a copy out to Downloads, and the two that REPLACE the live config —
+     * ~restore and ~restore-saf — come last. The overview renders them in this order, so
+     * the destructive pair sits furthest from the prompt, never nearest it.
      */
     val COMMANDS: List<Pair<String, Command>> = listOf(
         "~load" to Command.RELOAD,

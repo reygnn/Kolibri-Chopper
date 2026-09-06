@@ -9,6 +9,7 @@
     <string name="toast_recents_empty">No recents yet — the list resets when the launcher restarts</string>
     <!-- One-shot "~" commands. %1$s in toast_backup_ok is the written file name. -->
     <string name="toast_saved">config written to disk</string>
+    <string name="toast_save_failed">save failed — the config was NOT written</string>
     <string name="toast_backup_ok">backup: Download/KolibriChopper/%1$s</string>
     <string name="toast_backup_failed">backup failed — nothing was written</string>
     <string name="toast_restore_ok">config restored</string>
