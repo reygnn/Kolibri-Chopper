@@ -10,7 +10,7 @@ agp    = "9.4.0"
 kotlin = "2.3.21"
 # Test-only.
 junit  = "4.13.2"
-json   = "20240303"
+json   = "20260814"
 
 [libraries]
 # Test-only — JVM unit tests for the pure logic in LauncherLogic.kt.
