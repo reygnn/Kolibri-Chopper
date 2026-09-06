@@ -158,13 +158,19 @@ class MainActivity : Activity() {
     // flag is clear again and the gesture lands on whatever row has since moved into that
     // slot. Comparing the two makes a gesture act only on the list it was aimed at.
     private var shownGeneration = 0
-    private var touchDownGeneration = NO_TOUCH
+    // The generation the list had when THIS gesture's finger went down. Read LIVE by the
+    // long-press guard (CheckForLongPress fires before ACTION_UP, finger still down), then
+    // reset to NO_TOUCH the moment the gesture ends so a later accessibility click is not
+    // measured against a dead gesture.
+    private var touchDownGeneration = TapGuard.NO_TOUCH
 
-    // The verdict for the click a FINISHED gesture may still deliver, or null when no
-    // touch-originated click is pending. Only meaningful between ACTION_UP and the posted
-    // click; ACTION_DOWN and ACTION_CANCEL clear it so a gesture that delivered nothing
-    // cannot leave a veto lying around for something else.
-    private var pendingClickValid: Boolean? = null
+    // The down-generation handed over at ACTION_UP for the click the framework may still
+    // POST. A SEPARATE field from touchDownGeneration precisely because that one is cleared
+    // at UP: the click is delivered LATER, so it needs the down-generation preserved to
+    // compare against the CURRENT shownGeneration at delivery — that live compare is what
+    // catches a list replacement landing between ACTION_UP and the posted click. NO_TOUCH
+    // means "no touch-originated click pending", so an accessibility/hardware click passes.
+    private var clickDownGeneration = TapGuard.NO_TOUCH
 
     private var allApps: List<AppEntry> = emptyList()
     // What the ListView currently shows: app rows in every mode, or tag-name rows in
@@ -248,15 +254,18 @@ class MainActivity : Activity() {
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
                         touchDownGeneration = shownGeneration
-                        pendingClickValid = null   // a new gesture, nothing pending from the last
+                        clickDownGeneration = TapGuard.NO_TOUCH  // new gesture, nothing to deliver yet
                     }
                     MotionEvent.ACTION_UP -> {
-                        pendingClickValid = touchDownGeneration == shownGeneration
-                        touchDownGeneration = NO_TOUCH
+                        // Hand this gesture's down-generation to the click field and clear the
+                        // live one. The click compares it against shownGeneration when it is
+                        // actually delivered, so a replacement AFTER this UP is still caught.
+                        clickDownGeneration = touchDownGeneration
+                        touchDownGeneration = TapGuard.NO_TOUCH
                     }
                     MotionEvent.ACTION_CANCEL -> {
-                        touchDownGeneration = NO_TOUCH
-                        pendingClickValid = null
+                        touchDownGeneration = TapGuard.NO_TOUCH
+                        clickDownGeneration = TapGuard.NO_TOUCH
                     }
                 }
                 false
@@ -953,30 +962,35 @@ class MainActivity : Activity() {
      * identical, and identical for the same reasons — see [toggle].
      */
     /**
-     * May a posted click or long-press still act on [shown]?
+     * May the posted click still act on [shown]?
      *
-     * False only when the list was replaced between the finger going down and it being
-     * lifted — then the row at that position is not the one that was aimed at, and acting
-     * on it would toggle, launch, re-tag or rename an app the user never touched.
+     * False only when the list was replaced between the finger going down and this click
+     * being DELIVERED — then the row at that position is not the one that was aimed at, and
+     * acting on it would toggle, launch, re-tag or rename an app the user never touched.
      *
-     * Consumes the verdict ACTION_UP left behind, so it guards exactly the one click that
-     * touch leads to. A null verdict — no touch-originated click pending — passes:
-     * accessibility services and hardware keys invoke the click action directly, with no
-     * MotionEvent at all, and vetoing those would make the launcher unusable with a screen
-     * reader.
+     * The comparison is made live against the CURRENT [shownGeneration] here, not against a
+     * verdict frozen at ACTION_UP: [clickDownGeneration] preserves the down-generation past
+     * UP for exactly this reason. That closes the window a UP-time snapshot left open — a
+     * replacement landing between ACTION_UP and this posted delivery (a background app-load
+     * can, which is also why the branches below re-check via getOrNull). Nothing runs
+     * between reading the generation here and reading [shown] in the same callback, so the
+     * two stay consistent.
      *
-     * This is for the CLICK only. A long-press is delivered before its own ACTION_UP and
-     * needs [longPressStillValid] instead; sharing one helper between them is precisely
-     * the mistake that made the long-press guard a no-op once already.
+     * Consumes the down-generation (resets it to NO_TOUCH), so it guards exactly the one
+     * click that touch leads to and a following accessibility click passes. A NO_TOUCH
+     * value passes anyway: accessibility services and hardware keys invoke the click action
+     * directly, with no MotionEvent at all, and vetoing those would make the launcher
+     * unusable with a screen reader.
      *
-     * The one window this does NOT cover is a replacement landing between ACTION_UP and
-     * the posted delivery — a few dozen milliseconds, where AbsListView's own mDataChanged
-     * check still stands, since clearing that flag needs a whole layout pass to intervene.
+     * This reads [clickDownGeneration]; the long-press reads the LIVE [touchDownGeneration]
+     * via [longPressStillValid]. The pure arithmetic in [TapGuard.stillValid] is shared,
+     * but the FIELD each passes must not be — feeding a long-press the click's field (or
+     * vice versa) is the mistake that made the long-press guard a no-op once already.
      */
     private fun clickStillValid(): Boolean {
-        val verdict = pendingClickValid
-        pendingClickValid = null
-        return verdict ?: true
+        val downGeneration = clickDownGeneration
+        clickDownGeneration = TapGuard.NO_TOUCH
+        return TapGuard.stillValid(downGeneration, shownGeneration)
     }
 
     /**
@@ -995,7 +1009,7 @@ class MainActivity : Activity() {
      * an unattributed click through.
      */
     private fun longPressStillValid(): Boolean =
-        touchDownGeneration == NO_TOUCH || touchDownGeneration == shownGeneration
+        TapGuard.stillValid(touchDownGeneration, shownGeneration)
 
     private fun toggleTagOn(key: String) {
         val tag = tagEditTag ?: return
@@ -1461,9 +1475,5 @@ class MainActivity : Activity() {
         const val BACKUP_NAME = "chopper.json"
         const val PRE_RESTORE_NAME = "chopper-pre-restore.json"
         const val REQ_RESTORE = 1
-        // "no touch has been seen since the last click" — see the item-click listener.
-        // "no ACTION_DOWN has been seen" — an ACTION_UP without one cannot say anything
-        // about staleness, so it must not veto.
-        const val NO_TOUCH = -1
     }
 }
