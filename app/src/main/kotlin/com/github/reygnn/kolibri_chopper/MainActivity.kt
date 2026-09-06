@@ -160,18 +160,11 @@ class MainActivity : Activity() {
     private var shownGeneration = 0
     private var touchDownGeneration = NO_TOUCH
 
-    // The verdict, decided at ACTION_UP: was the list still the one the finger went down
-    // on? Deciding there rather than carrying the marker all the way to the click is what
-    // keeps this simple — ACTION_UP ends EVERY touch, whether it became a tap, a scroll or
-    // a long-press, so the value is always freshly set instead of being left behind by a
-    // gesture that produced nothing. An earlier version compared the marker at click time
-    // and tried to clear it on each known way a gesture can end; it missed two of them, and
-    // the leftover value then vetoed clicks that never came through the touch pipeline at
-    // all — TalkBack, a hardware D-pad — which is precisely the regression this must avoid.
-    //
-    // Defaults to true and returns to true after every use: not knowing is a reason to let
-    // a gesture through, never to swallow it.
-    private var gestureOnCurrentList = true
+    // The verdict for the click a FINISHED gesture may still deliver, or null when no
+    // touch-originated click is pending. Only meaningful between ACTION_UP and the posted
+    // click; ACTION_DOWN and ACTION_CANCEL clear it so a gesture that delivered nothing
+    // cannot leave a veto lying around for something else.
+    private var pendingClickValid: Boolean? = null
 
     private var allApps: List<AppEntry> = emptyList()
     // What the ListView currently shows: app rows in every mode, or tag-name rows in
@@ -253,20 +246,23 @@ class MainActivity : Activity() {
             @Suppress("ClickableViewAccessibility")
             setOnTouchListener { _, event ->
                 when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> touchDownGeneration = shownGeneration
-                    // Every touch ends in one of these two, so the verdict is refreshed on
-                    // every gesture — including the ones that never deliver anything.
-                    MotionEvent.ACTION_UP ->
-                        gestureOnCurrentList = touchDownGeneration == NO_TOUCH ||
-                            touchDownGeneration == shownGeneration
-                    // Nothing will be delivered from a cancelled gesture; leave the door
-                    // open rather than arming a veto for whatever comes next.
-                    MotionEvent.ACTION_CANCEL -> gestureOnCurrentList = true
+                    MotionEvent.ACTION_DOWN -> {
+                        touchDownGeneration = shownGeneration
+                        pendingClickValid = null   // a new gesture, nothing pending from the last
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        pendingClickValid = touchDownGeneration == shownGeneration
+                        touchDownGeneration = NO_TOUCH
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        touchDownGeneration = NO_TOUCH
+                        pendingClickValid = null
+                    }
                 }
                 false
             }
             setOnItemClickListener { _, _, position, _ ->
-                if (!gestureStillValid()) return@setOnItemClickListener
+                if (!clickStillValid()) return@setOnItemClickListener
                 // getOrNull, not [position]: a background load can complete on the
                 // main thread between the frame the user tapped and this click
                 // message running, shrinking shown — a stale position would then
@@ -302,18 +298,18 @@ class MainActivity : Activity() {
             // Long-press: set/clear a custom name (and tags) for an app. Tag rows have
             // no long-press action.
             setOnItemLongClickListener { _, _, position, _ ->
-                // Same guard as the click, through the same helper so the two cannot drift
-                // apart again: AbsListView posts CheckForLongPress on ACTION_DOWN and gates
-                // it on the same mDataChanged flag that an intervening layout clears, so a
-                // long-press is just as able to land on a row that moved in underneath.
-                // Not consumed when stale — let the framework do nothing rather than open a
-                // rename dialog for an app the user never pressed.
+                // Deliberately NOT the click's helper: a long-press fires while the
+                // finger is still down, so it must compare live rather than read a verdict
+                // that only exists after ACTION_UP. Same exposure though — AbsListView
+                // gates it on the mDataChanged flag an intervening layout clears — and a
+                // stale one opens the rename dialog for whichever app moved in underneath.
+                // Not consumed when stale: let the framework do nothing.
                 val row = shown.getOrNull(position) as? AppRow
                     ?: return@setOnItemLongClickListener false  // tag row or stale: not consumed
                 // Row type FIRST, guard second: a long-press on a tag row does nothing, and
                 // consuming the marker there would leave the click that follows it
                 // unguarded.
-                if (!gestureStillValid()) return@setOnItemLongClickListener false
+                if (!longPressStillValid()) return@setOnItemLongClickListener false
                 promptRename(row.entry)
                 true
             }
@@ -963,21 +959,43 @@ class MainActivity : Activity() {
      * lifted — then the row at that position is not the one that was aimed at, and acting
      * on it would toggle, launch, re-tag or rename an app the user never touched.
      *
-     * Reads the verdict [gestureOnCurrentList] left by ACTION_UP and puts it back to true,
-     * so it guards exactly the one gesture that touch leads to. A gesture arriving without
-     * a preceding touch therefore passes: accessibility services and hardware keys invoke
-     * the click action directly, with no MotionEvent at all, and vetoing those would make
-     * the launcher unusable with a screen reader.
+     * Consumes the verdict ACTION_UP left behind, so it guards exactly the one click that
+     * touch leads to. A null verdict — no touch-originated click pending — passes:
+     * accessibility services and hardware keys invoke the click action directly, with no
+     * MotionEvent at all, and vetoing those would make the launcher unusable with a screen
+     * reader.
+     *
+     * This is for the CLICK only. A long-press is delivered before its own ACTION_UP and
+     * needs [longPressStillValid] instead; sharing one helper between them is precisely
+     * the mistake that made the long-press guard a no-op once already.
      *
      * The one window this does NOT cover is a replacement landing between ACTION_UP and
      * the posted delivery — a few dozen milliseconds, where AbsListView's own mDataChanged
      * check still stands, since clearing that flag needs a whole layout pass to intervene.
      */
-    private fun gestureStillValid(): Boolean {
-        val ok = gestureOnCurrentList
-        gestureOnCurrentList = true
-        return ok
+    private fun clickStillValid(): Boolean {
+        val verdict = pendingClickValid
+        pendingClickValid = null
+        return verdict ?: true
     }
+
+    /**
+     * The same question for a LONG-PRESS, which needs a different answer — and getting that
+     * wrong is what made the previous version of this guard a no-op.
+     *
+     * AbsListView posts CheckForLongPress on ACTION_DOWN and fires it about half a second
+     * later WHILE THE FINGER IS STILL DOWN. It therefore arrives strictly BEFORE this
+     * gesture's own ACTION_UP — so there is no verdict for it to read, and reading one
+     * would only ever return a leftover from some earlier gesture. Instead the comparison
+     * is made live: touchDownGeneration still holds THIS gesture's value, because the
+     * gesture has not ended yet.
+     *
+     * NO_TOUCH means no touch is in progress — an accessibility service invoking the
+     * long-click action directly — and passes, for the same reason [clickStillValid] lets
+     * an unattributed click through.
+     */
+    private fun longPressStillValid(): Boolean =
+        touchDownGeneration == NO_TOUCH || touchDownGeneration == shownGeneration
 
     private fun toggleTagOn(key: String) {
         val tag = tagEditTag ?: return
@@ -1286,7 +1304,11 @@ class MainActivity : Activity() {
         // once per process that the list resets on restart, lest an empty "?" look
         // like the app forgot the user's recents. Guarded so the per-keystroke
         // TextWatcher can't repeat it.
-        if (mode == Mode.RECENTS && recentKeys.isEmpty() && !recentsEmptyHintShown) {
+        // shown, not recentKeys: a recent whose app has since been uninstalled is filtered
+        // out of the rendered list but still sits in recentKeys, so testing the cache would
+        // leave the user staring at an unexplained empty "?" — the one case the hint exists
+        // for.
+        if (mode == Mode.RECENTS && shown.isEmpty() && !recentsEmptyHintShown) {
             recentsEmptyHintShown = true
             Toast.makeText(this, getString(R.string.toast_recents_empty), Toast.LENGTH_LONG).show()
         }

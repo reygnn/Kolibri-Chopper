@@ -182,7 +182,7 @@ class LauncherLogicTest {
 
     // ---- parseCommand -------------------------------------------------------
 
-    @Test fun `the four commands and the bare tilde alias parse`() {
+    @Test fun `every command and the bare tilde alias parse`() {
         assertEquals(Command.RELOAD, LauncherLogic.parseCommand("~"))
         assertEquals(Command.RELOAD, LauncherLogic.parseCommand("~load"))
         assertEquals(Command.SAVE, LauncherLogic.parseCommand("~save"))
@@ -281,6 +281,54 @@ class LauncherLogicTest {
         assertNull(LauncherLogic.resolveCommand("~r"))
         assertNull(LauncherLogic.resolveCommand("~re"))
         assertNull(LauncherLogic.resolveCommand("~restor"))
+    }
+
+    /** The list and the test must not drift: a command added to COMMANDS without a line
+     *  here would otherwise look covered. */
+    @Test fun `parseCommand covers every entry in COMMANDS`() {
+        for ((spelling, command) in LauncherLogic.COMMANDS) {
+            assertEquals(spelling, command, LauncherLogic.parseCommand(spelling))
+        }
+    }
+
+    /**
+     * parseCommand's case handling was pinned; these two fold separately and were not.
+     * Drop either fold and "~B" shows an empty overview while "~RESTORE-" stops resolving,
+     * with nothing failing.
+     *
+     * Deliberately NOT called a ROOT-folding test: no command spelling currently contains
+     * an "i", so ROOT and a Turkish locale fold every one of them identically and no test
+     * could tell the two apart. Claiming otherwise would be theatre. The next test guards
+     * the day that stops being true.
+     */
+    @Test fun `commandsMatching and resolveCommand are case-insensitive too`() {
+        assertEquals(listOf("~backup"), LauncherLogic.commandsMatching("~B").map { it.first })
+        assertEquals(Command.BACKUP, LauncherLogic.resolveCommand("~B"))
+        assertEquals(Command.RESTORE_SAF, LauncherLogic.resolveCommand("~RESTORE-"))
+        assertEquals(Command.RELOAD, LauncherLogic.resolveCommand("~LOAD"))
+    }
+
+    /**
+     * A forward guard, not a check of today's behaviour. The moment someone adds a command
+     * whose spelling contains an "i" — "~import" is the obvious one — the difference
+     * between ROOT and a device-locale fold becomes observable, and a Turkish phone would
+     * stop resolving it. This fails then, at the commit that introduces the command,
+     * instead of on a user's phone.
+     */
+    @Test fun `every command spelling survives a Turkish uppercase round trip`() {
+        val original = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("tr"))
+            for ((spelling, _) in LauncherLogic.COMMANDS) {
+                assertEquals(
+                    "\"$spelling\" does not survive being typed in caps on a Turkish device",
+                    spelling,
+                    LauncherLogic.foldLabel(spelling.uppercase(Locale.getDefault())),
+                )
+            }
+        } finally {
+            Locale.setDefault(original)
+        }
     }
 
     @Test fun `an abbreviation matching nothing resolves to nothing`() {
