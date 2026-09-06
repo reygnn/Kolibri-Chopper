@@ -4,24 +4,17 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
-import android.content.ContentResolver
-import android.content.ContentUris
-import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
-import android.graphics.drawable.ColorDrawable
-import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.provider.DocumentsContract
-import android.provider.MediaStore
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
 import android.text.Editable
-import android.text.InputFilter
 import android.text.InputType
 import android.text.TextUtils
 import android.text.TextWatcher
@@ -34,19 +27,15 @@ import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
-import android.widget.ArrayAdapter
 import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
-import android.widget.MultiAutoCompleteTextView
 import android.widget.TextView
 import android.widget.Toast
 import android.window.OnBackInvokedDispatcher
 import java.io.File
 import java.io.FileDescriptor
-import java.io.FileOutputStream
-import java.io.IOException
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 
@@ -117,15 +106,9 @@ class MainActivity : Activity() {
         override val key: String = component.flattenToString()
     }
 
-    // A rendered list row. Almost always an app; in the bare-"#" tag overview the
-    // list instead shows tag names, and tapping one drills into that tag's apps.
-    // Keeping both in one list lets the single ListView/adapter serve either.
-    private sealed interface Row
-    private data class AppRow(val entry: AppEntry) : Row
-    private data class TagRow(val name: String) : Row
-    // A row of the "~" overview: the command's canonical spelling plus what to run
-    // when it is tapped, so the tap handler never has to re-parse the text it shows.
-    private data class CommandRow(val name: String, val command: Command) : Row
+    // The row types (Row/AppRow/TagRow/CommandRow) now live top-level in LauncherLogic.kt,
+    // beside the pure rowsFor that builds them, so both can be unit-tested off-device. Here
+    // they are parameterised with AppEntry: `shown` is a List<Row<AppEntry>>.
 
     // NB: not named `foreground` — that collides with View.foreground (a
     // Drawable) inside the apply{} blocks below and hides this Int.
@@ -174,8 +157,8 @@ class MainActivity : Activity() {
 
     private var allApps: List<AppEntry> = emptyList()
     // What the ListView currently shows: app rows in every mode, or tag-name rows in
-    // the bare-"#" overview. Reassigned only by applyFilter.
-    private var shown: List<Row> = emptyList()
+    // the bare-"#" overview. Reassigned only by applyFilter (from LauncherLogic.rowsFor).
+    private var shown: List<Row<AppEntry>> = emptyList()
 
     // The "?" mode: the component keys of the most recently launched apps, newest
     // first. Deliberately IN MEMORY ONLY — never written to chopper.json — so it
@@ -617,6 +600,19 @@ class MainActivity : Activity() {
     }
 
     /**
+     * The shared-storage backup layer (Download/[BACKUP_DIR]). The MediaStore mechanics live
+     * in [BackupStore]; the Activity keeps only the orchestration that needs it — exportConfig,
+     * restoreConfig and the "~restore-saf" picker.
+     */
+    private val backupStore by lazy {
+        BackupStore(
+            resolver = contentResolver,
+            subDir = BACKUP_DIR,
+            log = { msg, e -> if (e != null) Log.w("Chopper", msg, e) else Log.w("Chopper", msg) },
+        )
+    }
+
+    /**
      * Persist the current config to disk. Serializes the live [cfg] on the calling
      * (main) thread — cfg is only ever mutated there, so the read is race-free and
      * the result is an immutable snapshot — then hands the write to [ioExecutor] so a
@@ -679,7 +675,7 @@ class MainActivity : Activity() {
     private fun exportConfig(name: String) {
         val payload = ConfigJson.serialize(cfg)
         submitIo {
-            val ok = writeToDownloads(name, payload)
+            val ok = backupStore.write(name, payload)
             runOnUiThread {
                 // Name the file that was actually written: exportConfig serves both
                 // "~backup" and the undo point a restore leaves behind, and a toast
@@ -691,127 +687,6 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Publish [payload] into Download/[BACKUP_DIR] as [name] via MediaStore. Needs no
-     * storage permission: writing into the Downloads collection is always allowed, and an
-     * app may always rewrite what it wrote itself.
-     *
-     * Temp-write then publish, the same shape [writeConfigFile] uses for chopper.json and
-     * for the same reason. Opening the live backup with "wt" truncates it AT OPEN, so a
-     * write that then failed — ENOSPC, or the OS reaping a backgrounded HOME app mid-write
-     * — used to leave a torso where the backup had been. Unlike chopper.json in filesDir
-     * this file has no .bak beside it: it is the only off-device copy, so it must never be
-     * destroyed before its replacement is complete on disk.
-     *
-     * Sequence: write the payload into a PENDING temp row and fsync it -> delete the old
-     * row -> rename the temp onto its name. A crash in the publish window leaves the
-     * COMPLETE new payload under "<name>.tmp" rather than a truncated backup, and the next
-     * run clears that temp away. IS_PENDING keeps the half-written temp invisible to file
-     * managers, and is cleared as part of the same update that renames it — so a row can
-     * no longer be stranded pending, invisible to the user and on the clock for
-     * MediaStore's pending-expiry sweep.
-     *
-     * Never throws — a failed backup is reported and forgotten, it must not take a HOME
-     * app down with it. Returns whether the file was published.
-     */
-    private fun writeToDownloads(name: String, payload: String): Boolean {
-        val tmpName = "$name.tmp"
-        var tmp: Uri? = null
-        return try {
-            // A temp left behind by a previous crash would otherwise collide, and
-            // MediaStore resolves a taken DISPLAY_NAME by inventing "…(1)" rather than
-            // failing — which is how you end up with a folder full of near-duplicates.
-            findOwnDownload(tmpName)?.let { contentResolver.delete(it, null, null) }
-            tmp = contentResolver.insert(
-                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, tmpName)
-                    put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
-                    put(
-                        MediaStore.MediaColumns.RELATIVE_PATH,
-                        "${Environment.DIRECTORY_DOWNLOADS}/$BACKUP_DIR",
-                    )
-                    put(MediaStore.MediaColumns.IS_PENDING, 1)
-                },
-            ) ?: throw IOException("MediaStore refused an entry for $tmpName")
-            // fsync the CONTENTS before publishing, exactly as writeConfigFile does: the
-            // rename must not be able to reach disk ahead of the bytes it publishes.
-            contentResolver.openFileDescriptor(tmp, "w")?.use { pfd ->
-                val out = FileOutputStream(pfd.fileDescriptor)
-                out.write(payload.toByteArray(Charsets.UTF_8))
-                out.flush()
-                Os.fsync(pfd.fileDescriptor)
-            } ?: throw IOException("no descriptor for $tmp")
-            // Publish. Deleting the old row first because a rename onto a taken name would
-            // again produce "…(1)" instead of replacing it. This also sweeps away a row
-            // stranded pending by an older crash, since a query returns our own pending
-            // rows too.
-            findOwnDownload(name)?.let { contentResolver.delete(it, null, null) }
-            contentResolver.update(
-                tmp,
-                ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-                    put(MediaStore.MediaColumns.IS_PENDING, 0)
-                },
-                null,
-                null,
-            )
-            true
-        } catch (e: Exception) {
-            Log.w("Chopper", "backup to Downloads failed", e)
-            // Drop the temp rather than leaving an invisible stub in the user's Downloads.
-            // The previous backup is untouched at every point this can be reached.
-            tmp?.let { runCatching { contentResolver.delete(it, null, null) } }
-            false
-        }
-    }
-
-    /**
-     * The MediaStore row for OUR [name] in Download/[BACKUP_DIR], or null if we never
-     * wrote it — or no longer own it: an uninstall orphans the row, and the reinstalled
-     * app can then neither see nor overwrite it.
-     *
-     * Without a storage permission a query only ever returns the app's own rows, which
-     * is exactly the scope wanted here.
-     */
-    private fun findOwnDownload(name: String): Uri? = try {
-        val query = Bundle().apply {
-            putString(
-                ContentResolver.QUERY_ARG_SQL_SELECTION,
-                "${MediaStore.MediaColumns.RELATIVE_PATH}=? AND " +
-                    "${MediaStore.MediaColumns.DISPLAY_NAME}=?",
-            )
-            putStringArray(
-                ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,
-                // MediaStore stores RELATIVE_PATH WITH a trailing slash; without it the
-                // comparison never matches and every backup would insert a fresh copy.
-                arrayOf("${Environment.DIRECTORY_DOWNLOADS}/$BACKUP_DIR/", name),
-            )
-            // MATCH_INCLUDE, because MediaStore hides IS_PENDING rows from a plain query
-            // even from the app that wrote them. Without this both the cleanup above and
-            // the recovery in restoreConfig are dead code: a temp row stranded by a crash
-            // would be invisible, so it could neither be swept away nor read back, and it
-            // would sit there — a complete, unreachable backup — until MediaStore's own
-            // pending-expiry sweep deleted it for good.
-            putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
-        }
-        contentResolver.query(
-            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-            arrayOf(MediaStore.MediaColumns._ID),
-            query,
-            null,
-        )?.use { c ->
-            if (c.moveToFirst()) {
-                ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, c.getLong(0))
-            } else {
-                null
-            }
-        }
-    } catch (e: Exception) {
-        Log.w("Chopper", "looking up $name in Downloads failed", e)
-        null
-    }
-
-    /**
      * "~restore": read the one backup back in. No picker — there is a single file under
      * a known name, so there is nothing to choose.
      *
@@ -820,17 +695,17 @@ class MainActivity : Activity() {
      */
     private fun restoreConfig() {
         submitIo {
-            val uri = findOwnDownload(BACKUP_NAME)
+            val uri = backupStore.findOwn(BACKUP_NAME)
                 // A backup interrupted between deleting the old row and renaming the new
                 // one leaves the complete payload under the temp name. Picking it up here
                 // is what makes that window RECOVERABLE rather than merely survivable —
                 // without it the user is told "no backup" while a good one sits on disk.
                 // A temp torn mid-write is no risk: parseForeign refuses anything that is
                 // not a readable config, so a half-written one is rejected, not adopted.
-                ?: findOwnDownload("$BACKUP_NAME.tmp")?.also {
+                ?: backupStore.findOwn("$BACKUP_NAME.tmp")?.also {
                     Log.w("Chopper", "restore: no published backup — using an interrupted one")
                 }
-            val text = uri?.let { readText(it) }
+            val text = uri?.let { backupStore.readText(it) }
             runOnUiThread {
                 // Nothing there at all is its own message: "~backup was never run" is a
                 // different problem from "the backup is broken", and saying so saves the
@@ -888,7 +763,7 @@ class MainActivity : Activity() {
         // Backing out of the picker is not an error — say nothing.
         if (resultCode != RESULT_OK || uri == null) return
         submitIo {
-            val text = readText(uri)
+            val text = backupStore.readText(uri)
             runOnUiThread {
                 // Unlike [restoreConfig] a null here is not "no backup yet" — the user
                 // pointed at a file and it could not be read. Same message as a file that
@@ -897,15 +772,6 @@ class MainActivity : Activity() {
                 else adoptRestored(text)
             }
         }
-    }
-
-    /** Read a document's whole text, or null if it cannot be read. Shared by both
-     *  restore paths; runs on [ioExecutor], never throws. */
-    private fun readText(uri: Uri): String? = try {
-        contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
-    } catch (e: Exception) {
-        Log.w("Chopper", "restore: cannot read $uri", e)
-        null
     }
 
     /**
@@ -1109,90 +975,32 @@ class MainActivity : Activity() {
 
     private fun promptRename(entry: AppEntry) {
         val key = entry.key
-        // No autocorrect/autocapitalize on either field: a deliberate custom name or
-        // tag must not be silently "corrected" on the way in.
-        val noSuggest = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-        val nameInput = EditText(this).apply {
-            setText(cfg.names[key] ?: entry.systemLabel)
-            hint = getString(R.string.hint_rename_name)
-            isSingleLine = true
-            inputType = noSuggest
-            setSelection(text.length)
-        }
-        val tagsInput = MultiAutoCompleteTextView(this).apply {
-            // Show the stored tags back as a plain comma-separated list to edit.
-            setText(cfg.tags[key]?.joinToString(", ").orEmpty())
-            hint = getString(R.string.hint_rename_tags)
-            isSingleLine = true
-            inputType = noSuggest
-            // Force tags lowercase as typed, via the same ROOT fold used to store and
-            // match them — so the field shows exactly what gets saved, regardless of
-            // whether the keyboard's shift/auto-capitalize is on. (inputType requests no
-            // caps, but that hint isn't honored by every keyboard; the filter is the
-            // guarantee.) Only the tag field is folded — a custom name keeps its case.
-            filters = arrayOf(InputFilter { source, start, end, _, _, _ ->
-                val sub = source.subSequence(start, end).toString()
-                val folded = LauncherLogic.foldLabel(sub)
-                if (folded == sub) null else folded  // null = accept unchanged
-            })
-            // Autocomplete the comma-separated token being typed from the already-
-            // defined tags: type "g" and "games" is offered. A brand-new tag can still
-            // be typed freely — the suggestions are additive. CommaTokenizer scopes the
-            // completion to the current token so the others are left intact.
-            setTokenizer(MultiAutoCompleteTextView.CommaTokenizer())
-            threshold = 1
-            // Own dark, monospace dropdown so it fits the terminal look instead of the
-            // default light Material popup. getView is fully overridden, so the unused
-            // resource id passed to ArrayAdapter is never inflated.
-            setAdapter(object : ArrayAdapter<String>(
-                this@MainActivity, android.R.layout.simple_list_item_1, LauncherLogic.allTags(cfg.tags)
-            ) {
-                override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                    val tv = (convertView as? TextView) ?: TextView(this@MainActivity).apply {
-                        typeface = Typeface.MONOSPACE
-                        setTextColor(fgColor)
-                        textSize = 18f
-                        setPadding(12.dp(), 8.dp(), 12.dp(), 8.dp())
-                    }
-                    tv.text = getItem(position)
-                    return tv
-                }
-            })
-            setDropDownBackgroundDrawable(ColorDrawable(0xFF000000.toInt()))
-        }
-        val pad = 12.dp()
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad / 2, pad, 0)
-            addView(nameInput, LinearLayout.LayoutParams(MATCH, WRAP))
-            addView(tagsInput, LinearLayout.LayoutParams(MATCH, WRAP))
-        }
-        // Dismiss any dialog already up (rapid long-presses) before opening a new
-        // one, and keep the reference so onDestroy can tear it down. Clear the field
-        // on dismiss so we never hold a stale, already-gone dialog.
+        // Dismiss any dialog already up (rapid long-presses) before opening a new one, and
+        // keep the reference so onDestroy can tear it down. The view construction lives in
+        // RenameDialog; the Activity keeps only the config decisions the commit implies.
         renameDialog?.dismiss()
-        // Dark dialog theme so the rename popup stays in the black terminal look
-        // instead of flashing the platform's default light Material dialog.
-        renameDialog = AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
-            .setTitle(entry.label)
-            .setView(container)
-            .setPositiveButton(android.R.string.ok) { _, _ ->
-                val name = nameInput.text?.toString()?.trim().orEmpty()
-                // Empty OR identical to the app's own label = no override: drop any
-                // custom name instead of persisting a redundant one, so `names` only
-                // ever holds genuine overrides and re-typing the original clears it.
-                if (name.isEmpty() || name == entry.systemLabel) cfg.names.remove(key)
-                else cfg.names[key] = name
-                // Tags: normalize, and drop the key entirely when none remain so `tags`
-                // never holds an empty list (matching how names drops a blank override).
-                val tags = LauncherLogic.parseTags(tagsInput.text?.toString().orEmpty())
-                if (tags.isEmpty()) cfg.tags.remove(key) else cfg.tags[key] = tags.toMutableList()
-                saveConfig()
-                rebuildLabelsFor(key)  // in-memory: relabel + re-sort this component's row
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .setOnDismissListener { renameDialog = null }
-            .show()
+        renameDialog = RenameDialog.show(
+            context = this,
+            title = entry.label,
+            initialName = cfg.names[key] ?: entry.systemLabel,
+            initialTags = cfg.tags[key]?.joinToString(", ").orEmpty(),
+            allTags = LauncherLogic.allTags(cfg.tags),
+            fgColor = fgColor,
+        ) { name, tags ->
+            // Empty OR identical to the app's own label = no override: drop any custom name
+            // instead of persisting a redundant one, so `names` only ever holds genuine
+            // overrides and re-typing the original clears it.
+            if (name.isEmpty() || name == entry.systemLabel) cfg.names.remove(key)
+            else cfg.names[key] = name
+            // Tags arrive already canonical from RenameDialog; drop the key entirely when
+            // none remain so `tags` never holds an empty list (matching how names drops a
+            // blank override).
+            if (tags.isEmpty()) cfg.tags.remove(key) else cfg.tags[key] = tags.toMutableList()
+            saveConfig()
+            rebuildLabelsFor(key)  // in-memory: relabel + re-sort this component's row
+        }
+        // Clear the field on dismiss so we never hold a stale, already-gone dialog.
+        renameDialog?.setOnDismissListener { renameDialog = null }
     }
 
     /**
@@ -1289,57 +1097,22 @@ class MainActivity : Activity() {
         } else {
             null
         }
-        // "#" is the one mode that can show tag rows instead of app rows: a bare "#"
-        // lists the in-use tags (tap one to drill into its apps); once any text follows
-        // it, it shows the apps of every tag PREFIX-matching that text. Every other
-        // mode maps its app list straight to AppRow.
-        shown = if (mode == Mode.TAG_EDIT && tagEditTag == null) {
-            // Bare "##": allTags, NOT tagsInUse. The "#" overview drops tags whose apps
-            // have all been uninstalled, because drilling into one there would show an
-            // empty list. Bulk editing wants the opposite: a tag with no apps left is
-            // exactly the one you came to re-assign, and the rename dialog's autocomplete
-            // has always kept offering it. Hiding it here made the same tag reachable by
-            // typing it out but not by tapping it.
-            LauncherLogic.allTags(cfg.tags).map(::TagRow)
-        } else if (mode == Mode.COMMAND) {
-            // The "~" overview: the commands still matching what has been typed. Not an
-            // app list at all, so it bypasses the AppRow mapping below entirely.
-            LauncherLogic.commandsMatching(q).map { (name, cmd) -> CommandRow(name, cmd) }
-        } else if (mode == Mode.TAG_FILTER && q.substring(1).isBlank()) {
-            LauncherLogic.tagsInUse(allApps, cfg.tags).map(::TagRow)
-        } else when (mode) {
-            // Reorder lists exactly the current favorites, in their stored order —
-            // any text after "!!" is ignored (filtering would scramble the positions
-            // the reorder acts on). Nothing to show when none are set.
-            Mode.FAV_REORDER -> LauncherLogic.favoritesInDisplayOrder(allApps, cfg.favorites)
-            // Recents lists the last-launched apps (newest nearest the prompt). Like
-            // reorder, any text after "?" is ignored — the list is short and fixed.
-            Mode.RECENTS -> LauncherLogic.recentsInDisplayOrder(allApps, recentKeys)
-            // "#" with text after it: apps whose tags match that text (prefix).
-            Mode.TAG_FILTER -> LauncherLogic.tagged(allApps, cfg.tags, q.substring(1).trim())
-            // Edit modes list EVERY app (so anything can be toggled), narrowed by
-            // whatever follows the sigil. Membership shows as [x]/[ ] in getView.
-            Mode.HIDDEN_EDIT, Mode.FAV_EDIT -> LauncherLogic.search(allApps, q.substring(1).trim())
-            // "##tag": EVERY app, so anything can be tagged — the same reasoning as the
-            // other edit modes. Deliberately NOT reordered to put tagged apps first: rows
-            // would jump under the finger as you tick them, which is the opposite of fast.
-            Mode.TAG_EDIT -> allApps
-            // Handled above, before this app-list mapping — named here only to keep the
-            // when exhaustive, so a future Mode cannot be silently forgotten.
-            Mode.COMMAND -> emptyList()
-            Mode.NORMAL -> when {
-                q.isEmpty() -> favoritesView()
-                // "*": the app drawer — everything except hidden, but a favorite is
-                // always kept (favoriting overrides hiding), see LauncherLogic.drawer.
-                q == "*" -> LauncherLogic.orderWithFavorites(
-                    LauncherLogic.drawer(allApps, cfg.hidden, cfg.favorites), cfg.favorites
-                )
-                // Plain search spans ALL apps, so a hidden app is still reachable by
-                // typing its (possibly custom) name — hidden only trims the default
-                // views, it doesn't make an app unlaunchable.
-                else -> LauncherLogic.search(allApps, q)
-            }
-        }.map(::AppRow)
+        // The entire "given the prompt, what rows does the list show?" decision now lives
+        // as one pure, exhaustively-tested function in LauncherLogic (see rowsFor and
+        // LauncherRowsTest). The Activity keeps only the SIDE EFFECTS around it: the
+        // reorderPick reset and tagEditTag above, the shownGeneration bump and the empty-
+        // recents toast below. tagEditTag is passed in rather than recomputed so the value
+        // the adapter reads and the value rowsFor uses can never drift.
+        shown = LauncherLogic.rowsFor(
+            mode = mode,
+            trimmed = q,
+            allApps = allApps,
+            hidden = cfg.hidden,
+            favorites = cfg.favorites,
+            tags = cfg.tags,
+            recentKeys = recentKeys,
+            tagEditTag = tagEditTag,
+        )
         // Any replacement of shown invalidates a tap already in flight (see the click
         // listener). Bumped here, in the ONE place shown is assigned.
         shownGeneration++
@@ -1359,20 +1132,6 @@ class MainActivity : Activity() {
         }
         adapter.notifyDataSetChanged()
     }
-
-    /** Empty prompt: just the favorites (in config order). Favorites are shown
-     *  even if also hidden — favoriting overrides hiding, so a starred app is never
-     *  trimmed from the two default views (this one and the "*" drawer); hiding it
-     *  only affects it once the favorite is removed. Falls back to the full drawer
-     *  when none are configured OR none of the configured ones are currently
-     *  launchable, so a fresh install — or one where every favorite has since been
-     *  uninstalled — never leaves a blank home screen with no way back to the apps. */
-    private fun favoritesView(): List<AppEntry> =
-        LauncherLogic.favoritesInDisplayOrder(allApps, cfg.favorites).ifEmpty {
-            LauncherLogic.orderWithFavorites(
-                LauncherLogic.drawer(allApps, cfg.hidden, cfg.favorites), cfg.favorites
-            )
-        }
 
     private fun launch(entry: AppEntry) {
         // A launcher starts the app in its own task, not nested in this one.
@@ -1446,21 +1205,17 @@ class MainActivity : Activity() {
 
         private fun bindAppRow(tv: TextView, entry: AppEntry) {
             val key = entry.key
-            // In an edit mode each row carries a monospace checkbox glyph; "[ ] "
-            // and "[x] " are the same width, so labels stay column-aligned.
-            tv.text = when (mode) {
-                Mode.HIDDEN_EDIT -> (if (key in cfg.hidden) "[x] " else "[ ] ") + entry.label
-                Mode.FAV_EDIT    -> (if (key in cfg.favorites) "[x] " else "[ ] ") + entry.label
-                // "» " marks the picked-up row; "  " keeps the others column-aligned
-                // (same two-cell width in the monospace face).
-                Mode.FAV_REORDER -> (if (key == reorderPick) "» " else "  ") + entry.label
-                Mode.TAG_EDIT ->
-                    (if (tagEditTag in cfg.tags[key].orEmpty()) "[x] " else "[ ] ") + entry.label
-                // COMMAND renders no app rows at all (see applyFilter); it rides along
-                // with the undecorated cases so this stays exhaustive without inventing a
-                // glyph for a row that cannot exist.
-                Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER, Mode.COMMAND -> entry.label
-            }
+            // The edit-mode marker glyph is chosen by the pure LauncherLogic.rowPrefix
+            // (unit-tested in LauncherRowsTest); the read modes return "" so the label
+            // stands alone. "[ ] "/"[x] " and "» "/"  " are equal-width, so labels stay
+            // column-aligned.
+            tv.text = LauncherLogic.rowPrefix(
+                mode,
+                isHidden = key in cfg.hidden,
+                isFavorite = key in cfg.favorites,
+                isPicked = key == reorderPick,
+                isTagged = tagEditTag in cfg.tags[key].orEmpty(),
+            ) + entry.label
             // Accessibility: the "[x]"/"[ ]" glyph reads as literal punctuation to a
             // screen reader, so in the edit modes give the row a spoken description of
             // its state and what a tap does. NORMAL rows read their label fine, so the

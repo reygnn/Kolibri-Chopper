@@ -33,6 +33,22 @@ internal interface Ordered {
     val labelLower: String
 }
 
+/**
+ * A rendered list row. Lifted out of [MainActivity] (where it was a private nested
+ * sealed interface) so [LauncherLogic.rowsFor] can build it purely and the tests can
+ * assert on it without an Android runtime.
+ *
+ * Generic over [Ordered] for the SAME reason the rest of this file is: the app rows in
+ * production carry an AppEntry (which wraps a framework ComponentName, unusable on a
+ * plain JVM), while a test fakes them with a trivial [Ordered]. [AppRow] therefore holds
+ * a `T`, not a concrete AppEntry; [TagRow]/[CommandRow] carry no app and are `Row<Nothing>`
+ * so they slot into a `Row<T>` list for any T (the interface is `out T`).
+ */
+internal sealed interface Row<out T : Ordered>
+internal data class AppRow<out T : Ordered>(val entry: T) : Row<T>
+internal data class TagRow(val name: String) : Row<Nothing>
+internal data class CommandRow(val name: String, val command: Command) : Row<Nothing>
+
 internal object LauncherLogic {
 
     /**
@@ -289,5 +305,94 @@ internal object LauncherLogic {
             val ts = tags[entry.key].orEmpty()
             if (n.isEmpty()) ts.isNotEmpty() else ts.any { it.startsWith(n) }
         }
+    }
+
+    /**
+     * The whole "given the prompt, what rows does the list show?" decision, lifted out of
+     * MainActivity.applyFilter so it is a single pure, exhaustively-testable mapping. The
+     * Activity keeps only the SIDE EFFECTS around it — bumping shownGeneration, resetting
+     * reorderPick, the empty-recents toast, notifyDataSetChanged — and the two derived
+     * inputs it also stores as fields ([mode] and [tagEditTag]) it computes once and passes
+     * in, so there is one source of truth for each.
+     *
+     * [trimmed] is the already-trimmed prompt. [tagEditTag] is the canonical tag behind a
+     * "##tag" (null while the bare-"##" overview is up) — the Activity computes it because
+     * the adapter needs the same value; passing it avoids canonicalising twice and drifting.
+     *
+     * The branch order mirrors the old applyFilter exactly: the three non-app / bypass modes
+     * first (bare-"##" tag list, the "~" command overview, the bare-"#" tag list), then the
+     * per-mode app selection. Every substring index is safe because the sigil that selects a
+     * mode guarantees the prompt starts with it (see [parseMode]).
+     */
+    fun <T : Ordered> rowsFor(
+        mode: Mode,
+        trimmed: String,
+        allApps: List<T>,
+        hidden: Set<String>,
+        favorites: Set<String>,
+        tags: Map<String, List<String>>,
+        recentKeys: List<String>,
+        tagEditTag: String?,
+    ): List<Row<T>> {
+        // Bare "##": allTags, NOT tagsInUse — bulk editing wants a tag whose apps are all
+        // uninstalled too, since that is exactly the one you came to re-assign.
+        if (mode == Mode.TAG_EDIT && tagEditTag == null) {
+            return allTags(tags).map { TagRow(it) }
+        }
+        // "~" overview: the commands still matching what has been typed. Not an app list.
+        if (mode == Mode.COMMAND) {
+            return commandsMatching(trimmed).map { (name, cmd) -> CommandRow(name, cmd) }
+        }
+        // Bare "#": the in-use tags to drill into (drops ghost tags whose apps are all gone).
+        if (mode == Mode.TAG_FILTER && trimmed.substring(1).isBlank()) {
+            return tagsInUse(allApps, tags).map { TagRow(it) }
+        }
+        val apps: List<T> = when (mode) {
+            // Reorder / recents ignore any text after the sigil: the list is short and
+            // fixed, and filtering would scramble the positions the reorder acts on.
+            Mode.FAV_REORDER -> favoritesInDisplayOrder(allApps, favorites)
+            Mode.RECENTS -> recentsInDisplayOrder(allApps, recentKeys)
+            Mode.TAG_FILTER -> tagged(allApps, tags, trimmed.substring(1).trim())
+            // Edit modes list EVERY app (so anything can be toggled), narrowed by what
+            // follows the sigil; membership shows as [x]/[ ] in the adapter.
+            Mode.HIDDEN_EDIT, Mode.FAV_EDIT -> search(allApps, trimmed.substring(1).trim())
+            // "##tag": every app so anything can be tagged. Deliberately NOT reordered to
+            // put tagged first — rows would jump under the finger as you tick them.
+            Mode.TAG_EDIT -> allApps
+            // Handled above; named only to keep the when exhaustive.
+            Mode.COMMAND -> emptyList()
+            Mode.NORMAL -> when {
+                // Empty prompt: favorites, or the drawer when none are set (or none of the
+                // set ones are currently launchable) so a fresh install is never blank.
+                trimmed.isEmpty() -> favoritesInDisplayOrder(allApps, favorites).ifEmpty {
+                    orderWithFavorites(drawer(allApps, hidden, favorites), favorites)
+                }
+                // "*": the drawer — everything except hidden, but a favorite is always kept.
+                trimmed == "*" -> orderWithFavorites(drawer(allApps, hidden, favorites), favorites)
+                // Plain search spans ALL apps, so a hidden app stays reachable by name.
+                else -> search(allApps, trimmed)
+            }
+        }
+        return apps.map { AppRow(it) }
+    }
+
+    /**
+     * The one- or two-cell monospace marker a row carries in each edit mode, lifted out of
+     * the adapter's bindAppRow so the glyph selection is pure and testable. "[ ] "/"[x] "
+     * are the same width, and "» "/"  " are the same width, so labels stay column-aligned.
+     * The read modes (and COMMAND, which renders no app rows) carry no marker.
+     */
+    fun rowPrefix(
+        mode: Mode,
+        isHidden: Boolean,
+        isFavorite: Boolean,
+        isPicked: Boolean,
+        isTagged: Boolean,
+    ): String = when (mode) {
+        Mode.HIDDEN_EDIT -> if (isHidden) "[x] " else "[ ] "
+        Mode.FAV_EDIT -> if (isFavorite) "[x] " else "[ ] "
+        Mode.FAV_REORDER -> if (isPicked) "\u00BB " else "  "
+        Mode.TAG_EDIT -> if (isTagged) "[x] " else "[ ] "
+        Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER, Mode.COMMAND -> ""
     }
 }
