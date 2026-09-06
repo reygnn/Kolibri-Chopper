@@ -62,6 +62,9 @@ a launcher does not strictly need and see how small the APK gets.
   command line (the bottom-most, since the list fills upward). This holds even on an
   empty prompt — **Enter** with nothing typed launches your nearest favorite. That
   is intentional: it makes the prompt a one-key quick-launch for your top favorite.
+- A `×` clear button at the right end of the command line wipes the prompt back to
+  favorites in one tap, keeping the keyboard up so you can retype at once; it shows
+  only while there is text to erase.
 - Long-press any row to set a custom name and its tags (comma-separated).
 - Registers as `HOME` + `LAUNCHER`, `singleTask`. That's it.
 
@@ -97,8 +100,10 @@ Compared to Kolibri Launcher, the Chopper drops **all** of it:
 
 The launcher is a handful of small files: `MainActivity.kt` (the framework
 wiring) plus the pure, unit-tested logic split out beside it — `LauncherLogic.kt`
-(mode parsing, filtering, favorite ordering and reordering), `ChopperConfig.kt`
-(the config model) and `ConfigJson.kt` (the `chopper.json` round-trip). The only
+(mode parsing, filtering, favorite ordering and reordering), `TapGuard.kt` (the
+tap/long-press staleness check that keeps a click acting on the row it aimed at),
+`ChopperConfig.kt` (the config model), `ConfigJson.kt` (the `chopper.json`
+round-trip) and `ConfigStore.kt` (the durable load/save/backup file layer). The only
 *shipped* dependencies are the Kotlin stdlib (added automatically by AGP's
 built-in Kotlin); JUnit and org.json are `testImplementation` only, so the
 release APK stays dependency-free and byte-for-byte the same size (R8 re-inlines
