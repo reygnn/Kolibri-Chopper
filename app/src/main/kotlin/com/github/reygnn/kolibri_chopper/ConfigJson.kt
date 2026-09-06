@@ -89,11 +89,19 @@ internal object ConfigJson {
             for (k in o.keys()) {
                 val arr = o.optJSONArray(k) ?: continue
                 val list = ArrayList<String>(arr.length())
-                // Fold on the way in too, not just when parseTags writes them: a
-                // hand-edited chopper.json with an unfolded "Work" would otherwise never
-                // match the ROOT-folded "#work" filter. Folding here makes "stored tags
-                // are canonical" hold for EVERY loaded file, not only app-written ones.
-                for (i in 0 until arr.length()) list += LauncherLogic.foldLabel(arr.getString(i))
+                // Canonicalise on the way in too, not just when the app writes them: a
+                // hand-edited or restored chopper.json with an unfolded "Work", a stray
+                // "#work" or a comma inside a tag would otherwise be unreachable from the
+                // filters, or would break the "#"/"##" sigil dispatch. Doing it here makes
+                // "stored tags are canonical" hold for EVERY loaded file, not only
+                // app-written ones, and quietly migrates a config written before the rule
+                // existed. Empties are dropped, and duplicates with them — two tags that
+                // canonicalise to the same thing must collapse, or toggleTag's minus
+                // (first occurrence only) could never fully un-tick the app.
+                for (i in 0 until arr.length()) {
+                    val tag = LauncherLogic.canonicalTag(arr.getString(i))
+                    if (tag.isNotEmpty() && tag !in list) list += tag
+                }
                 // Drop an empty list rather than materializing a tagless key — keeps the
                 // in-memory shape identical to what serialize() would write next time.
                 if (list.isNotEmpty()) loaded.tags[k] = list

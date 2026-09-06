@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
+import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
@@ -677,14 +678,30 @@ class MainActivity : Activity() {
      * is exactly the scope wanted here.
      */
     private fun findOwnDownload(name: String): Uri? = try {
+        val query = Bundle().apply {
+            putString(
+                ContentResolver.QUERY_ARG_SQL_SELECTION,
+                "${MediaStore.MediaColumns.RELATIVE_PATH}=? AND " +
+                    "${MediaStore.MediaColumns.DISPLAY_NAME}=?",
+            )
+            putStringArray(
+                ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,
+                // MediaStore stores RELATIVE_PATH WITH a trailing slash; without it the
+                // comparison never matches and every backup would insert a fresh copy.
+                arrayOf("${Environment.DIRECTORY_DOWNLOADS}/$BACKUP_DIR/", name),
+            )
+            // MATCH_INCLUDE, because MediaStore hides IS_PENDING rows from a plain query
+            // even from the app that wrote them. Without this both the cleanup above and
+            // the recovery in restoreConfig are dead code: a temp row stranded by a crash
+            // would be invisible, so it could neither be swept away nor read back, and it
+            // would sit there — a complete, unreachable backup — until MediaStore's own
+            // pending-expiry sweep deleted it for good.
+            putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+        }
         contentResolver.query(
             MediaStore.Downloads.EXTERNAL_CONTENT_URI,
             arrayOf(MediaStore.MediaColumns._ID),
-            "${MediaStore.MediaColumns.RELATIVE_PATH}=? AND " +
-                "${MediaStore.MediaColumns.DISPLAY_NAME}=?",
-            // MediaStore stores RELATIVE_PATH WITH a trailing slash; without it the
-            // comparison never matches and every backup would insert a fresh copy.
-            arrayOf("${Environment.DIRECTORY_DOWNLOADS}/$BACKUP_DIR/", name),
+            query,
             null,
         )?.use { c ->
             if (c.moveToFirst()) {
@@ -707,7 +724,17 @@ class MainActivity : Activity() {
      */
     private fun restoreConfig() {
         submitIo {
-            val text = findOwnDownload(BACKUP_NAME)?.let { readText(it) }
+            val uri = findOwnDownload(BACKUP_NAME)
+                // A backup interrupted between deleting the old row and renaming the new
+                // one leaves the complete payload under the temp name. Picking it up here
+                // is what makes that window RECOVERABLE rather than merely survivable —
+                // without it the user is told "no backup" while a good one sits on disk.
+                // A temp torn mid-write is no risk: parseForeign refuses anything that is
+                // not a readable config, so a half-written one is rejected, not adopted.
+                ?: findOwnDownload("$BACKUP_NAME.tmp")?.also {
+                    Log.w("Chopper", "restore: no published backup — using an interrupted one")
+                }
+            val text = uri?.let { readText(it) }
             runOnUiThread {
                 // Nothing there at all is its own message: "~backup was never run" is a
                 // different problem from "the backup is broken", and saying so saves the
@@ -1104,10 +1131,12 @@ class MainActivity : Activity() {
         // A pickup belongs to a single reorder session: drop it the moment we're no
         // longer in FAV_REORDER, so nothing stale survives into another mode.
         if (mode != Mode.FAV_REORDER) reorderPick = null
-        // Whatever follows "##" IS the tag; blank means the overview is showing and no
-        // tag is chosen yet. Folded here once, so nothing downstream has to remember to.
+        // Whatever follows "##" IS the tag; blank means the overview is showing and no tag
+        // is chosen yet. Canonicalised here once — the SAME rule the dialog and the file
+        // loader apply — so "##Work", "##work" and "##  work" are one tag, and nothing
+        // downstream has to remember to normalise.
         tagEditTag = if (mode == Mode.TAG_EDIT) {
-            q.substring(2).trim().takeIf { it.isNotEmpty() }?.let(LauncherLogic::foldLabel)
+            LauncherLogic.canonicalTag(q.substring(2)).takeIf { it.isNotEmpty() }
         } else {
             null
         }

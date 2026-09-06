@@ -182,4 +182,35 @@ class ConfigJsonTest {
         assertEquals(listOf("work"), back.tags["f/2"])
     }
 
+    // ---- tag canonicalisation on load ---------------------------------------
+
+    /** A config written before the rule existed — or hand-edited, or restored from
+     *  another device — is migrated on load rather than kept in a shape the app can no
+     *  longer reach. */
+    @Test
+    fun `loading canonicalises tags out of a foreign or older file`() {
+        val cfg = ConfigJson.parse("""{"tags":{"pkg/A":["#work","Chat","foo,bar","  spaced  "]}}""")
+
+        assertEquals(listOf("work", "chat", "foobar", "spaced"), cfg!!.tags["pkg/A"])
+    }
+
+    /** Duplicates must collapse: toggleTag's minus removes only the first occurrence, so
+     *  a doubled tag could never be fully un-ticked in the "##" editor. */
+    @Test
+    fun `loading collapses tags that canonicalise to the same thing`() {
+        val cfg = ConfigJson.parse("""{"tags":{"pkg/A":["Work","work","#work"]}}""")
+
+        assertEquals(listOf("work"), cfg!!.tags["pkg/A"])
+    }
+
+    /** An app whose tags all canonicalise to nothing loses its KEY, not merely its
+     *  values — an empty list would disagree with what serialize writes next. */
+    @Test
+    fun `an app whose tags all vanish loses its key`() {
+        val cfg = ConfigJson.parse("""{"tags":{"pkg/A":["###",",",""],"pkg/B":["work"]}}""")
+
+        assertTrue("pkg/A" !in cfg!!.tags)
+        assertEquals(listOf("work"), cfg.tags["pkg/B"])
+    }
+
 }

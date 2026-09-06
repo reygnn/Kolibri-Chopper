@@ -62,6 +62,82 @@ class LauncherLogicTest {
         assertEquals(Mode.TAG_FILTER, LauncherLogic.parseMode("#work"))
     }
 
+    // ---- canonicalTag -------------------------------------------------------
+
+    /** The finding this exists for: a tag beginning with "#" made the tag overview build
+     *  "#" + "#work" = "##work", which parses as the BULK EDITOR for a truncated tag —
+     *  so the tag was unreachable from the very list offering it. */
+    @Test fun `canonicalTag strips the hash that would flip the sigil`() {
+        assertEquals("work", LauncherLogic.canonicalTag("#work"))
+        assertEquals("work", LauncherLogic.canonicalTag("##work"))
+        assertEquals("work", LauncherLogic.canonicalTag("wo#rk"))
+    }
+
+    /** The second finding: a comma survives storage but the long-press dialog joins with
+     *  ", " and re-splits on "," — so the tag was torn in two by an unrelated rename. */
+    @Test fun `canonicalTag strips the comma that would tear a tag in two`() {
+        assertEquals("foobar", LauncherLogic.canonicalTag("foo,bar"))
+    }
+
+    /** Other sigils are NOT stripped: "#" + "!work" = "#!work", and since only position 0
+     *  picks the mode that still lands in the tag filter. Throwing them away would lose
+     *  perfectly usable tag names for no gain. */
+    @Test fun `canonicalTag keeps the harmless sigils`() {
+        assertEquals("!work", LauncherLogic.canonicalTag("!work"))
+        assertEquals("-work", LauncherLogic.canonicalTag("-work"))
+        assertEquals("~work", LauncherLogic.canonicalTag("~work"))
+        assertEquals("?work", LauncherLogic.canonicalTag("?work"))
+        assertEquals("my work", LauncherLogic.canonicalTag("my work"))
+    }
+
+    @Test fun `canonicalTag folds, trims and drops control characters`() {
+        assertEquals("work", LauncherLogic.canonicalTag("  WORK  "))
+        assertEquals("work", LauncherLogic.canonicalTag("work\n"))
+        assertEquals("work", LauncherLogic.canonicalTag("# work"))
+    }
+
+    @Test fun `canonicalTag returns empty when nothing survives`() {
+        assertEquals("", LauncherLogic.canonicalTag("###"))
+        assertEquals("", LauncherLogic.canonicalTag(",,,"))
+        assertEquals("", LauncherLogic.canonicalTag("   "))
+        assertEquals("", LauncherLogic.canonicalTag(""))
+    }
+
+    /** Same ROOT-folding reason as everywhere else. */
+    @Test fun `canonicalTag folds with ROOT, not the device locale`() {
+        val original = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("tr"))
+            assertEquals("i", LauncherLogic.canonicalTag("I"))
+        } finally {
+            Locale.setDefault(original)
+        }
+    }
+
+    /** The dialog's separator must still work: canonicalTag only sees ONE tag at a time,
+     *  because parseTags splits on "," first. */
+    @Test fun `parseTags still splits on commas and now canonicalises each piece`() {
+        assertEquals(listOf("work", "chat"), LauncherLogic.parseTags("#work, Chat"))
+        assertEquals(listOf("work"), LauncherLogic.parseTags("work, #work, WORK"))
+        assertEquals(emptyList<String>(), LauncherLogic.parseTags("#, ,,"))
+    }
+
+    /** "##" and the dialog must agree, or a tag is reachable one way and not the other —
+     *  which is exactly how the two findings arose. */
+    @Test fun `the bulk editor and the dialog canonicalise identically`() {
+        for (raw in listOf("#work", "WORK", "  work  ", "wo#rk", "foo,bar")) {
+            val viaDialog = LauncherLogic.parseTags(raw).firstOrNull().orEmpty()
+            val viaBulk = LauncherLogic.toggleTag(null, raw).firstOrNull().orEmpty()
+            if (raw == "foo,bar") continue  // the dialog SPLITS this one; see the test above
+            assertEquals("disagreement on \"$raw\"", viaDialog, viaBulk)
+        }
+    }
+
+    @Test fun `toggleTag ignores a tag that canonicalises to nothing`() {
+        assertEquals(listOf("work"), LauncherLogic.toggleTag(listOf("work"), "###"))
+        assertEquals(emptyList<String>(), LauncherLogic.toggleTag(null, "  "))
+    }
+
     // ---- toggleTag ----------------------------------------------------------
 
     @Test fun `toggleTag adds a tag an app does not carry`() {

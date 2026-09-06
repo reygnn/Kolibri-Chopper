@@ -25,6 +25,11 @@ a launcher does not strictly need and see how small the APK gets.
     with an `[x]`/`[ ]` for that tag; tap a row to toggle it, saved immediately. This
     is the way to put one tag on many apps — the long-press dialog stays the way to
     invent a tag and to set several tags on one app
+  - Tag names are canonicalised wherever they are entered: lowercased, trimmed, and
+    `#` and `,` are dropped. `#` because the tag list builds its prompt by prepending
+    a sigil (a tag starting with `#` would turn `#tag` into `##tag`, a different mode);
+    `,` because it separates tags in the long-press dialog. Typing `#work` gives you
+    `work` rather than an error, and an older config is cleaned up as it loads
   - `-[text]` — edit hidden: tap a row to toggle `[x]`, saved immediately
   - `![text]` — edit favorites: tap a row to toggle `[x]`, saved immediately
   - `!!` — reorder favorites: tap a row to pick it up (marked `»`), tap another

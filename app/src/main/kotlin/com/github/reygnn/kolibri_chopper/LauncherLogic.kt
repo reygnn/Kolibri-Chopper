@@ -200,13 +200,41 @@ internal object LauncherLogic {
      * can assume its stored tags are already folded and never re-normalize per filter.
      */
     fun parseTags(raw: String): List<String> =
-        raw.split(',').map { foldLabel(it.trim()) }.filter { it.isNotEmpty() }.distinct()
+        raw.split(',').map(::canonicalTag).filter { it.isNotEmpty() }.distinct()
+
+    /**
+     * Canonicalise ONE tag: ROOT-folded, stripped of the characters the rest of the app
+     * gives a meaning to, and trimmed. Returns "" when nothing survives — callers drop
+     * empties. THE single definition of what a tag may look like; every path that can put
+     * a tag into the config goes through here ([parseTags] for the dialog, [toggleTag] for
+     * "##", ConfigJson for a file off disk), so a tag cannot exist in one shape in memory
+     * and another on disk.
+     *
+     * '#' is removed because the tag overview builds its prompt by PREPENDING a sigil
+     * ("#" + name). A tag beginning with '#' would produce "##…", which parses as the bulk
+     * editor for a different, truncated tag — the tag would become unreachable from the
+     * very list that offered it. Other sigils are harmless: "!work" yields "#!work", and
+     * since only position 0 selects the mode that still lands in the tag filter.
+     *
+     * ',' is removed because the long-press dialog joins tags with ", " for display and
+     * re-splits on ',' when confirmed. A tag containing a comma stores fine but is torn in
+     * two the next time that dialog is opened — even to do something unrelated, like a
+     * rename. ([parseTags] splits on ',' BEFORE calling this, so the separator still works
+     * exactly as before; only a comma that survived into a single tag is dropped.)
+     *
+     * Control characters go too — a paste can carry a newline, which nothing renders.
+     *
+     * Ignoring rather than rejecting is deliberate: this is a launcher prompt, not a form.
+     * Typing "#work" should hand you the tag you obviously meant, not an error.
+     */
+    fun canonicalTag(raw: String): String =
+        foldLabel(raw).filter { it != '#' && it != ',' && !it.isISOControl() }.trim()
 
     /**
      * Add or remove [tag] on an app whose current tags are [current], returning the new
-     * list. Folds [tag] with ROOT so a typed "##Work" hits the stored "work" — stored tag
-     * values are canonical (see [parseTags]), and a comparison against an unfolded needle
-     * would silently create a second, near-identical tag.
+     * list. Runs [tag] through [canonicalTag] so a typed "##Work" hits the stored "work" —
+     * stored tag values are canonical, and comparing against a raw needle would silently
+     * create a second, near-identical tag.
      *
      * Returns a possibly EMPTY list. The caller must store that as a removed key, never as
      * an empty list: serialize and parse both drop empty tag lists, so keeping one would
@@ -216,8 +244,13 @@ internal object LauncherLogic {
      * them — first-entered stays first.
      */
     fun toggleTag(current: List<String>?, tag: String): List<String> {
-        val folded = foldLabel(tag)
+        val folded = canonicalTag(tag)
         val list = current.orEmpty()
+        // Nothing survived canonicalisation ("##" then only "#" and commas): there is no
+        // tag to toggle, so leave the app exactly as it was rather than inventing one.
+        if (folded.isEmpty()) return list
+        // minus removes only the FIRST occurrence, which is why every write path
+        // de-duplicates: a list holding the same tag twice could not be fully un-ticked.
         return if (folded in list) list - folded else list + folded
     }
 
