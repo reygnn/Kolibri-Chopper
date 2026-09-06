@@ -153,12 +153,25 @@ class MainActivity : Activity() {
     private var tagEditTag: String? = null
 
     // How many times [shown] has been replaced, and what that counter read when the
-    // finger last went down. AbsListView POSTS the click, and it only drops a pending one
-    // while its own mDataChanged flag is up — once a layout pass has run, the flag is
-    // clear again and the click lands on whatever row has since moved into that slot.
-    // Comparing the two makes a tap act only on the list the user actually touched.
+    // finger last went down. AbsListView POSTS its click and long-press, and it only drops
+    // a pending one while its own mDataChanged flag is up — once a layout pass has run the
+    // flag is clear again and the gesture lands on whatever row has since moved into that
+    // slot. Comparing the two makes a gesture act only on the list it was aimed at.
     private var shownGeneration = 0
     private var touchDownGeneration = NO_TOUCH
+
+    // The verdict, decided at ACTION_UP: was the list still the one the finger went down
+    // on? Deciding there rather than carrying the marker all the way to the click is what
+    // keeps this simple — ACTION_UP ends EVERY touch, whether it became a tap, a scroll or
+    // a long-press, so the value is always freshly set instead of being left behind by a
+    // gesture that produced nothing. An earlier version compared the marker at click time
+    // and tried to clear it on each known way a gesture can end; it missed two of them, and
+    // the leftover value then vetoed clicks that never came through the touch pipeline at
+    // all — TalkBack, a hardware D-pad — which is precisely the regression this must avoid.
+    //
+    // Defaults to true and returns to true after every use: not knowing is a reason to let
+    // a gesture through, never to swallow it.
+    private var gestureOnCurrentList = true
 
     private var allApps: List<AppEntry> = emptyList()
     // What the ListView currently shows: app rows in every mode, or tag-name rows in
@@ -239,22 +252,21 @@ class MainActivity : Activity() {
             // its own scrolling and click detection.
             @Suppress("ClickableViewAccessibility")
             setOnTouchListener { _, event ->
-                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-                    touchDownGeneration = shownGeneration
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> touchDownGeneration = shownGeneration
+                    // Every touch ends in one of these two, so the verdict is refreshed on
+                    // every gesture — including the ones that never deliver anything.
+                    MotionEvent.ACTION_UP ->
+                        gestureOnCurrentList = touchDownGeneration == NO_TOUCH ||
+                            touchDownGeneration == shownGeneration
+                    // Nothing will be delivered from a cancelled gesture; leave the door
+                    // open rather than arming a veto for whatever comes next.
+                    MotionEvent.ACTION_CANCEL -> gestureOnCurrentList = true
                 }
                 false
             }
             setOnItemClickListener { _, _, position, _ ->
-                // Consume the marker: each touch guards exactly the one click it leads to.
-                val touched = touchDownGeneration
-                touchDownGeneration = NO_TOUCH
-                // NO_TOUCH means this click did not follow a touch we saw — TalkBack and
-                // other accessibility services invoke the click action directly, with no
-                // MotionEvent at all. There is no stale-position risk in that case, and
-                // dropping it would make the launcher unusable with a screen reader.
-                if (touched != NO_TOUCH && touched != shownGeneration) {
-                    return@setOnItemClickListener
-                }
+                if (!gestureStillValid()) return@setOnItemClickListener
                 // getOrNull, not [position]: a background load can complete on the
                 // main thread between the frame the user tapped and this click
                 // message running, shrinking shown — a stale position would then
@@ -290,8 +302,18 @@ class MainActivity : Activity() {
             // Long-press: set/clear a custom name (and tags) for an app. Tag rows have
             // no long-press action.
             setOnItemLongClickListener { _, _, position, _ ->
+                // Same guard as the click, through the same helper so the two cannot drift
+                // apart again: AbsListView posts CheckForLongPress on ACTION_DOWN and gates
+                // it on the same mDataChanged flag that an intervening layout clears, so a
+                // long-press is just as able to land on a row that moved in underneath.
+                // Not consumed when stale — let the framework do nothing rather than open a
+                // rename dialog for an app the user never pressed.
                 val row = shown.getOrNull(position) as? AppRow
                     ?: return@setOnItemLongClickListener false  // tag row or stale: not consumed
+                // Row type FIRST, guard second: a long-press on a tag row does nothing, and
+                // consuming the marker there would leave the click that follows it
+                // unguarded.
+                if (!gestureStillValid()) return@setOnItemLongClickListener false
                 promptRename(row.entry)
                 true
             }
@@ -471,6 +493,10 @@ class MainActivity : Activity() {
                     // start no mutation is possible yet, so this always adopts.)
                     if (configEpoch == cfgEpoch) {
                         cfg = useCfg
+                        // The rename dialog read the OLD cfg when it opened and writes
+                        // back on OK; leaving it up over a wholesale replace lets it
+                        // persist its stale fields into the config that just arrived.
+                        renameDialog?.dismiss()
                         configLoaded = true
                     }
                 }
@@ -876,6 +902,9 @@ class MainActivity : Activity() {
         // the same reason it does: an enumeration already in flight captured the OLD
         // cfg, and must not be allowed to hand it back over this one.
         cfg = restored
+        // Same reason as the reload path: a dialog opened against the pre-restore cfg
+        // would write its stale name and tags over what the restore just brought in.
+        renameDialog?.dismiss()
         configLoaded = true
         configEpoch++
         saveConfig()
@@ -927,6 +956,29 @@ class MainActivity : Activity() {
      * in-memory shape would stop matching the file). The epoch/save/notify tail is
      * identical, and identical for the same reasons — see [toggle].
      */
+    /**
+     * May a posted click or long-press still act on [shown]?
+     *
+     * False only when the list was replaced between the finger going down and it being
+     * lifted — then the row at that position is not the one that was aimed at, and acting
+     * on it would toggle, launch, re-tag or rename an app the user never touched.
+     *
+     * Reads the verdict [gestureOnCurrentList] left by ACTION_UP and puts it back to true,
+     * so it guards exactly the one gesture that touch leads to. A gesture arriving without
+     * a preceding touch therefore passes: accessibility services and hardware keys invoke
+     * the click action directly, with no MotionEvent at all, and vetoing those would make
+     * the launcher unusable with a screen reader.
+     *
+     * The one window this does NOT cover is a replacement landing between ACTION_UP and
+     * the posted delivery — a few dozen milliseconds, where AbsListView's own mDataChanged
+     * check still stands, since clearing that flag needs a whole layout pass to intervene.
+     */
+    private fun gestureStillValid(): Boolean {
+        val ok = gestureOnCurrentList
+        gestureOnCurrentList = true
+        return ok
+    }
+
     private fun toggleTagOn(key: String) {
         val tag = tagEditTag ?: return
         val next = LauncherLogic.toggleTag(cfg.tags[key], tag)
@@ -1179,9 +1231,13 @@ class MainActivity : Activity() {
         // it, it shows the apps of every tag PREFIX-matching that text. Every other
         // mode maps its app list straight to AppRow.
         shown = if (mode == Mode.TAG_EDIT && tagEditTag == null) {
-            // Bare "##": the same overview the bare "#" shows, but tapping a row drills
-            // into the checkbox list rather than into a filter.
-            LauncherLogic.tagsInUse(allApps, cfg.tags).map(::TagRow)
+            // Bare "##": allTags, NOT tagsInUse. The "#" overview drops tags whose apps
+            // have all been uninstalled, because drilling into one there would show an
+            // empty list. Bulk editing wants the opposite: a tag with no apps left is
+            // exactly the one you came to re-assign, and the rename dialog's autocomplete
+            // has always kept offering it. Hiding it here made the same tag reachable by
+            // typing it out but not by tapping it.
+            LauncherLogic.allTags(cfg.tags).map(::TagRow)
         } else if (mode == Mode.COMMAND) {
             // The "~" overview: the commands still matching what has been typed. Not an
             // app list at all, so it bypasses the AppRow mapping below entirely.
@@ -1384,6 +1440,8 @@ class MainActivity : Activity() {
         const val PRE_RESTORE_NAME = "chopper-pre-restore.json"
         const val REQ_RESTORE = 1
         // "no touch has been seen since the last click" — see the item-click listener.
+        // "no ACTION_DOWN has been seen" — an ACTION_UP without one cannot say anything
+        // about staleness, so it must not veto.
         const val NO_TOUCH = -1
     }
 }
