@@ -28,9 +28,11 @@ a launcher does not strictly need and see how small the APK gets.
   - `?` — the last 8 launched apps, newest nearest the command line. Kept in
     memory only, so it starts empty on every cold start; **Enter** relaunches the
     most recent
-  - `~` + **Enter** — one-shot commands. Type one in full, press **Enter**; it acts
-    once and the prompt clears. Only an exact match counts, so an ordinary search
-    starting with `~` is still just a search:
+  - `~[text]` — commands. Typing `~` lists the commands; typing more narrows the
+    list (`~r` leaves `~restore` and `~restore-saf`). Tap a row to run it, or press
+    **Enter** once what you typed can only mean one command — `~b` is enough for
+    `~backup`. An ambiguous prefix does nothing on **Enter**, it just keeps the list
+    up. Each command acts once and clears the prompt:
     - `~` / `~load` — reload the config from disk
     - `~save` — write the in-memory config out now (saves are automatic anyway;
       this is the explicit one)
@@ -43,6 +45,10 @@ a launcher does not strictly need and see how small the APK gets.
       The config being replaced is written next to it as
       `chopper-pre-restore.json`, so a restore never destroys what it overwrote
       without a trace. A backup that doesn't parse changes nothing
+    - `~restore-saf` — the same, but you pick the file in the system document
+      picker. Plain `~restore` only sees files this app itself wrote, so a config
+      carried over from another phone (or surviving a reinstall) is invisible to
+      it; this is the way in for those. One dialog, no permission
 - Tap a row or press **Enter** to launch. **Enter** launches the row nearest the
   command line (the bottom-most, since the list fills upward). This holds even on an
   empty prompt — **Enter** with nothing typed launches your nearest favorite. That

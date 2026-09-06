@@ -13,7 +13,8 @@
     <string name="toast_backup_failed">backup failed — nothing was written</string>
     <string name="toast_restore_ok">config restored</string>
     <string name="toast_restore_failed">restore failed — the backup is not a readable chopper.json. Nothing was changed.</string>
-    <string name="toast_restore_none">no backup found — run ~backup first</string>
+    <string name="toast_restore_none">no backup found — run ~backup first, or ~restore-saf to pick a file</string>
+    <string name="toast_restore_no_picker">no file picker on this device</string>
     <!-- Spoken row descriptions for the edit modes (the "[x]"/"[ ]" glyph is not
          read aloud sensibly). %1$s is the app label. -->
     <string name="a11y_hidden_on">Hidden: %1$s. Double-tap to unhide.</string>

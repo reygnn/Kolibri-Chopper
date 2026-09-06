@@ -16,12 +16,12 @@ import java.util.Locale
 
 /** The command-line mode, chosen by the prompt's leading sigil. Top-level so the
  *  Activity, the adapter and the tests can all name it. */
-internal enum class Mode { NORMAL, HIDDEN_EDIT, FAV_EDIT, FAV_REORDER, RECENTS, TAG_FILTER }
+internal enum class Mode { NORMAL, HIDDEN_EDIT, FAV_EDIT, FAV_REORDER, RECENTS, TAG_FILTER, COMMAND }
 
 /** A one-shot "~" command, typed out in full and fired with Enter. Unlike a [Mode]
  *  it renders nothing: it acts once and the prompt is cleared. Top-level for the
  *  same reason [Mode] is — the Activity and the tests both name it. */
-internal enum class Command { RELOAD, SAVE, BACKUP, RESTORE }
+internal enum class Command { RELOAD, SAVE, BACKUP, RESTORE, RESTORE_SAF }
 
 /** The two fields the ordering/search logic needs from a row: its identity [key]
  *  and its case-folded label. AppEntry implements this, and tests fake it with a
@@ -43,24 +43,64 @@ internal object LauncherLogic {
         trimmed.startsWith("!") -> Mode.FAV_EDIT
         trimmed.startsWith("?") -> Mode.RECENTS
         trimmed.startsWith("#") -> Mode.TAG_FILTER
+        // "~" is a live sigil like the rest: it lists the commands still matching what
+        // has been typed. The cost is that a label containing "~" is no longer
+        // searchable — the same trade every other sigil already makes.
+        trimmed.startsWith("~") -> Mode.COMMAND
         else -> Mode.NORMAL
     }
 
     /**
-     * Map a trimmed prompt to its one-shot command, or null when it isn't one — in
-     * which case the caller treats the text as an ordinary prompt.
+     * Every "~" command with its canonical spelling. One list, so the overview rows,
+     * the abbreviation resolver and the exact parser can never drift apart — adding a
+     * command here is the whole change.
      *
-     * Only an EXACT (case-folded) match counts. That is what keeps "~" from eating
-     * input: a search for "~something" is still just a search, so the sigil never
-     * has to be escaped. Bare "~" stays an alias for "~load" — it is the spelling
-     * that shipped first and lives in muscle memory.
+     * Ordered harmless-first: the two that only read or write our own file, then the
+     * two that replace the live config. The overview renders them in this order, so
+     * the destructive pair sits nearest the prompt last, not first.
      */
-    fun parseCommand(trimmed: String): Command? = when (foldLabel(trimmed)) {
-        "~", "~load" -> Command.RELOAD
-        "~save" -> Command.SAVE
-        "~backup" -> Command.BACKUP
-        "~restore" -> Command.RESTORE
-        else -> null
+    val COMMANDS: List<Pair<String, Command>> = listOf(
+        "~load" to Command.RELOAD,
+        "~save" to Command.SAVE,
+        "~backup" to Command.BACKUP,
+        "~restore" to Command.RESTORE,
+        "~restore-saf" to Command.RESTORE_SAF,
+    )
+
+    /**
+     * The command spelled EXACTLY by [trimmed] (case-folded), or null.
+     *
+     * Bare "~" stays an alias for "~load": it is the spelling that shipped first and
+     * lives in muscle memory, and it keeps Enter on a bare "~" doing what it always
+     * did even though "~" now also opens the overview.
+     */
+    fun parseCommand(trimmed: String): Command? {
+        val q = foldLabel(trimmed)
+        if (q == "~") return Command.RELOAD
+        return COMMANDS.firstOrNull { it.first == q }?.second
+    }
+
+    /** The commands an overview should list for [trimmed]: every one whose name starts
+     *  with it. A bare "~" therefore lists them all, which is the point of the mode. */
+    fun commandsMatching(trimmed: String): List<Pair<String, Command>> {
+        val q = foldLabel(trimmed)
+        return COMMANDS.filter { it.first.startsWith(q) }
+    }
+
+    /**
+     * The command Enter should run: an exact match, or an unambiguous abbreviation —
+     * "~b" is only ever "~backup", so typing it out is busywork.
+     *
+     * EXACT beats prefix, and that is load-bearing: "~restore" both names a command and
+     * prefixes "~restore-saf", and spelling one out in full must mean the one spelled.
+     * An abbreviation that still fits more than one command ("~r", "~re") resolves to
+     * null rather than picking — the overview is already showing which are in the
+     * running, and guessing between two commands that both replace the config is not a
+     * guess worth making.
+     */
+    fun resolveCommand(trimmed: String): Command? {
+        parseCommand(trimmed)?.let { return it }
+        return commandsMatching(trimmed).singleOrNull()?.second
     }
 
     /**

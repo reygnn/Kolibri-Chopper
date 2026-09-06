@@ -13,7 +13,8 @@
     <string name="toast_backup_failed">Backup fehlgeschlagen — es wurde nichts geschrieben</string>
     <string name="toast_restore_ok">Config wiederhergestellt</string>
     <string name="toast_restore_failed">Wiederherstellung fehlgeschlagen — das Backup ist keine lesbare chopper.json. Es wurde nichts geändert.</string>
-    <string name="toast_restore_none">Kein Backup gefunden — erst ~backup ausführen</string>
+    <string name="toast_restore_none">Kein Backup gefunden — erst ~backup ausführen, oder ~restore-saf zum Auswählen</string>
+    <string name="toast_restore_no_picker">Kein Dateimanager auf diesem Gerät</string>
     <!-- Gesprochene Zeilenbeschreibung für die Bearbeitungsmodi. %1$s = App-Name. -->
     <string name="a11y_hidden_on">Ausgeblendet: %1$s. Zum Einblenden doppeltippen.</string>
     <string name="a11y_hidden_off">Sichtbar: %1$s. Zum Ausblenden doppeltippen.</string>

@@ -14,6 +14,7 @@ import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.system.ErrnoException
 import android.system.Os
@@ -68,7 +69,11 @@ import java.util.concurrent.RejectedExecutionException
  *   !!      reorder favorites: tap a row to pick it up (marked »), tap another
  *           row to drop it there; tap the picked row again to cancel
  *   ?       recents: the last-launched apps (in memory only, empty after restart)
- * One-shot "~" commands (type in full, then Enter — they act once and clear):
+ *   ~[text] commands: lists the "~" commands still matching [text] (a bare "~"
+ *           lists every one); tap a row to run it
+ * The "~" commands. Tap one in that overview, or type enough of one to be
+ * unambiguous ("~b" can only be "~backup") and press Enter. Each acts once and
+ * clears the prompt:
  *   ~ / ~load  reload chopper.json from disk (the config is cached otherwise)
  *   ~save      flush the in-memory config to disk (saves are automatic; this is
  *              the explicit "write it now" for peace of mind)
@@ -77,6 +82,10 @@ import java.util.concurrent.RejectedExecutionException
  *   ~restore   adopt that backup again. No picker: one file, known name. The config
  *              being replaced is written next to it as chopper-pre-restore.json, so
  *              a restore never destroys the state it overwrote without a trace.
+ *   ~restore-saf
+ *              same, but PICK the file via the system document picker. The escape
+ *              hatch for a config carried over from another phone, which plain
+ *              ~restore cannot see (see [restoreConfig]).
  * Long-press any row to set a custom name and its tags.
  */
 class MainActivity : Activity() {
@@ -108,6 +117,9 @@ class MainActivity : Activity() {
     private sealed interface Row
     private data class AppRow(val entry: AppEntry) : Row
     private data class TagRow(val name: String) : Row
+    // A row of the "~" overview: the command's canonical spelling plus what to run
+    // when it is tapped, so the tap handler never has to re-parse the text it shows.
+    private data class CommandRow(val name: String, val command: Command) : Row
 
     // NB: not named `foreground` — that collides with View.foreground (a
     // Drawable) inside the apply{} blocks below and hides this Int.
@@ -211,11 +223,22 @@ class MainActivity : Activity() {
                     // A tag row (bare "#") drills into that tag's apps by rewriting the
                     // prompt — the TextWatcher then re-filters through applyFilter.
                     is TagRow -> prompt.setText("#${row.name}")
+                    // Clear FIRST, exactly as the Enter path does: setText fires the
+                    // TextWatcher synchronously, so the mode is back to NORMAL before
+                    // the command runs and the re-render can't land on a stale overview.
+                    is CommandRow -> {
+                        prompt.setText("")
+                        runCommand(row.command)
+                    }
                     is AppRow -> when (mode) {
                         Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER -> launch(row.entry)
                         Mode.HIDDEN_EDIT -> toggle(cfg.hidden, row.entry.key)
                         Mode.FAV_EDIT    -> toggle(cfg.favorites, row.entry.key)
                         Mode.FAV_REORDER -> reorderTap(row.entry.key)
+                        // The "~" overview holds CommandRows, never AppRows — its taps
+                        // are handled by the CommandRow branch above. Named only to keep
+                        // this when exhaustive.
+                        Mode.COMMAND -> {}
                     }
                     null -> {}  // stale position
                 }
@@ -261,7 +284,7 @@ class MainActivity : Activity() {
                 }
                 // A "~" command is one-shot, not a view, so it lives on Enter rather
                 // than on a live sigil — nothing happens while it is being typed.
-                val command = LauncherLogic.parseCommand(
+                val command = LauncherLogic.resolveCommand(
                     prompt.text?.toString()?.trim().orEmpty()
                 )
                 when {
@@ -271,6 +294,11 @@ class MainActivity : Activity() {
                         prompt.setText("")
                         runCommand(command)
                     }
+                    // An abbreviation that still fits more than one command ("~r"):
+                    // do nothing at all. Clearing would throw away what was typed, and
+                    // the overview is right there showing what is still in the running —
+                    // one more keystroke settles it.
+                    mode == Mode.COMMAND -> {}
                     // In an edit mode Enter is a "done" gesture: clear the prompt
                     // back to normal instead of launching whatever sits at the top.
                     // lastOrNull, not firstOrNull: with isStackFromBottom the list
@@ -286,6 +314,9 @@ class MainActivity : Activity() {
                         when (val last = shown.lastOrNull()) {
                             is AppRow -> launch(last.entry)
                             is TagRow -> prompt.setText("#${last.name}")
+                            // Unreachable: COMMAND mode returns at the branch above, so
+                            // no command row ever reaches this one.
+                            is CommandRow -> {}
                             null -> {}
                         }
                     else -> prompt.setText("")
@@ -518,6 +549,7 @@ class MainActivity : Activity() {
             }
             Command.BACKUP -> exportConfig(BACKUP_NAME)
             Command.RESTORE -> restoreConfig()
+            Command.RESTORE_SAF -> pickRestoreFile()
         }
     }
 
@@ -650,33 +682,93 @@ class MainActivity : Activity() {
      */
     private fun restoreConfig() {
         submitIo {
-            val uri = findOwnDownload(BACKUP_NAME)
-            val text = uri?.let {
-                try {
-                    contentResolver.openInputStream(it)
-                        ?.use { s -> s.readBytes().toString(Charsets.UTF_8) }
-                } catch (e: Exception) {
-                    Log.w("Chopper", "restore: cannot read $it", e)
-                    null
-                }
+            val text = findOwnDownload(BACKUP_NAME)?.let { readText(it) }
+            runOnUiThread {
+                // Nothing there at all is its own message: "~backup was never run" is a
+                // different problem from "the backup is broken", and saying so saves the
+                // user hunting for a file that does not exist.
+                if (text == null) toast(getString(R.string.toast_restore_none), Toast.LENGTH_LONG)
+                else adoptRestored(text)
             }
-            runOnUiThread { adoptRestored(text) }
         }
     }
 
     /**
-     * Adopt what [restoreConfig] read, back on the main thread.
+     * Ask the system picker for a config, then adopt it — the "~restore-saf" command.
      *
-     * Order matters and is the whole safety story: PARSE first, so a missing or
-     * malformed backup aborts with the live config untouched. Only with a valid config
-     * in hand is the outgoing one written out as the undo point, and only then is the
-     * new one adopted.
+     * Plain "~restore" reads the app's OWN MediaStore row, which is invisible after a
+     * reinstall and on a different phone; ACTION_OPEN_DOCUMENT has no such blind spot,
+     * because the user granting the pick IS the permission. So this is the way a config
+     * moves between devices, at the cost of one dialog.
      */
-    private fun adoptRestored(text: String?) {
-        if (text == null) {
-            toast(getString(R.string.toast_restore_none), Toast.LENGTH_LONG)
-            return
+    private fun pickRestoreFile() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            // "*/*" plus a hint list, not a strict "application/json": a .json arrives
+            // typed as text/plain or octet-stream depending on who wrote or copied it,
+            // and a strict filter would grey out the very file being looked for.
+            .setType("*/*")
+            .putExtra(
+                Intent.EXTRA_MIME_TYPES,
+                arrayOf("application/json", "text/plain", "application/octet-stream"),
+            )
+            // Open ON the backup folder rather than wherever the picker last was — the
+            // backups live in a SUB-folder of Downloads, so a picker landing in Downloads
+            // root shows everything EXCEPT them. Only a hint; DocumentsUI ignores it when
+            // it cannot honour it (folder not created yet, no backup ever written).
+            .putExtra(
+                DocumentsContract.EXTRA_INITIAL_URI,
+                DocumentsContract.buildDocumentUri(
+                    "com.android.externalstorage.documents",
+                    "primary:${Environment.DIRECTORY_DOWNLOADS}/$BACKUP_DIR",
+                ),
+            )
+        try {
+            startActivityForResult(intent, REQ_RESTORE)
+        } catch (e: ActivityNotFoundException) {
+            Log.w("Chopper", "no document picker on this device", e)
+            toast(getString(R.string.toast_restore_no_picker))
         }
+    }
+
+    /** The "~restore-saf" picker's answer. Reading stays off the main thread; only the
+     *  adoption comes back to it, exactly as in [restoreConfig]. */
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_RESTORE) return
+        val uri = data?.data
+        // Backing out of the picker is not an error — say nothing.
+        if (resultCode != RESULT_OK || uri == null) return
+        submitIo {
+            val text = readText(uri)
+            runOnUiThread {
+                // Unlike [restoreConfig] a null here is not "no backup yet" — the user
+                // pointed at a file and it could not be read. Same message as a file that
+                // does not parse: either way nothing was changed.
+                if (text == null) toast(getString(R.string.toast_restore_failed), Toast.LENGTH_LONG)
+                else adoptRestored(text)
+            }
+        }
+    }
+
+    /** Read a document's whole text, or null if it cannot be read. Shared by both
+     *  restore paths; runs on [ioExecutor], never throws. */
+    private fun readText(uri: Uri): String? = try {
+        contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
+    } catch (e: Exception) {
+        Log.w("Chopper", "restore: cannot read $uri", e)
+        null
+    }
+
+    /**
+     * Adopt config text that [restoreConfig] or the "~restore-saf" picker read, back on
+     * the main thread. The caller has already established there WAS something to read.
+     *
+     * Order matters and is the whole safety story: PARSE first, so a malformed backup
+     * aborts with the live config untouched. Only with a valid config in hand is the
+     * outgoing one written out as the undo point, and only then is the new one adopted.
+     */
+    private fun adoptRestored(text: String) {
         // parseForeign, NOT parse: the lenient parser would turn any JSON object at all
         // into an empty config and wipe everything without so much as an error.
         val restored = ConfigJson.parseForeign(text)
@@ -1053,7 +1145,11 @@ class MainActivity : Activity() {
         // lists the in-use tags (tap one to drill into its apps); once any text follows
         // it, it shows the apps of every tag PREFIX-matching that text. Every other
         // mode maps its app list straight to AppRow.
-        shown = if (mode == Mode.TAG_FILTER && q.substring(1).isBlank()) {
+        shown = if (mode == Mode.COMMAND) {
+            // The "~" overview: the commands still matching what has been typed. Not an
+            // app list at all, so it bypasses the AppRow mapping below entirely.
+            LauncherLogic.commandsMatching(q).map { (name, cmd) -> CommandRow(name, cmd) }
+        } else if (mode == Mode.TAG_FILTER && q.substring(1).isBlank()) {
             LauncherLogic.tagsInUse(allApps, cfg.tags).map(::TagRow)
         } else when (mode) {
             // Reorder lists exactly the current favorites, in their stored order —
@@ -1068,6 +1164,9 @@ class MainActivity : Activity() {
             // Edit modes list EVERY app (so anything can be toggled), narrowed by
             // whatever follows the sigil. Membership shows as [x]/[ ] in getView.
             Mode.HIDDEN_EDIT, Mode.FAV_EDIT -> LauncherLogic.search(allApps, q.substring(1).trim())
+            // Handled above, before this app-list mapping — named here only to keep the
+            // when exhaustive, so a future Mode cannot be silently forgotten.
+            Mode.COMMAND -> emptyList()
             Mode.NORMAL -> when {
                 q.isEmpty() -> favoritesView()
                 // "*": the app drawer — everything except hidden, but a favorite is
@@ -1167,6 +1266,12 @@ class MainActivity : Activity() {
                     tv.text = row.name
                     tv.contentDescription = null
                 }
+                // "~" overview: the command's own spelling is the label, and it reads
+                // aloud as-is, so clear any stale edit-mode description off the recycled view.
+                is CommandRow -> {
+                    tv.text = row.name
+                    tv.contentDescription = null
+                }
                 is AppRow -> bindAppRow(tv, row.entry)
             }
             return tv
@@ -1182,7 +1287,10 @@ class MainActivity : Activity() {
                 // "» " marks the picked-up row; "  " keeps the others column-aligned
                 // (same two-cell width in the monospace face).
                 Mode.FAV_REORDER -> (if (key == reorderPick) "» " else "  ") + entry.label
-                Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER -> entry.label
+                // COMMAND renders no app rows at all (see applyFilter); it rides along
+                // with the undecorated cases so this stays exhaustive without inventing a
+                // glyph for a row that cannot exist.
+                Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER, Mode.COMMAND -> entry.label
             }
             // Accessibility: the "[x]"/"[ ]" glyph reads as literal punctuation to a
             // screen reader, so in the edit modes give the row a spoken description of
@@ -1206,7 +1314,7 @@ class MainActivity : Activity() {
                     },
                     entry.label,
                 )
-                Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER -> null
+                Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER, Mode.COMMAND -> null
             }
         }
     }
@@ -1223,5 +1331,6 @@ class MainActivity : Activity() {
         // picker — it already knows the name of the only file it could mean.
         const val BACKUP_NAME = "chopper.json"
         const val PRE_RESTORE_NAME = "chopper-pre-restore.json"
+        const val REQ_RESTORE = 1
     }
 }

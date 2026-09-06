@@ -61,11 +61,24 @@ class LauncherLogicTest {
         assertEquals(Command.SAVE, LauncherLogic.parseCommand("~save"))
         assertEquals(Command.BACKUP, LauncherLogic.parseCommand("~backup"))
         assertEquals(Command.RESTORE, LauncherLogic.parseCommand("~restore"))
+        assertEquals(Command.RESTORE_SAF, LauncherLogic.parseCommand("~restore-saf"))
+    }
+
+    /** "~restore" is a strict PREFIX of "~restore-saf". Because the match is exact
+     *  neither can shadow the other, whichever order the branches are written in —
+     *  the trap parseMode has with "!!" vs "!" simply doesn't exist here. */
+    @Test fun `restore and restore-saf do not shadow each other`() {
+        assertEquals(Command.RESTORE, LauncherLogic.parseCommand("~restore"))
+        assertEquals(Command.RESTORE_SAF, LauncherLogic.parseCommand("~restore-saf"))
+        assertNull(LauncherLogic.parseCommand("~restore-"))
+        assertNull(LauncherLogic.parseCommand("~restore-safe"))
+        assertNull(LauncherLogic.parseCommand("~restoresaf"))
     }
 
     @Test fun `commands are case-insensitive`() {
         assertEquals(Command.BACKUP, LauncherLogic.parseCommand("~BACKUP"))
         assertEquals(Command.RESTORE, LauncherLogic.parseCommand("~ReStOrE"))
+        assertEquals(Command.RESTORE_SAF, LauncherLogic.parseCommand("~Restore-SAF"))
     }
 
     /** Folding must be ROOT, not the device locale: a Turkish default would map the
@@ -91,11 +104,61 @@ class LauncherLogicTest {
         assertNull(LauncherLogic.parseCommand(""))
     }
 
-    /** A "~" command is not a Mode — parseMode must keep calling it NORMAL, or the
-     *  prompt would try to render a view for it while it is being typed. */
-    @Test fun `command text stays a NORMAL mode`() {
-        assertEquals(Mode.NORMAL, LauncherLogic.parseMode("~backup"))
-        assertEquals(Mode.NORMAL, LauncherLogic.parseMode("~"))
+    /** "~" IS a mode now: it renders the command overview while being typed. It used
+     *  to stay NORMAL (so "~foo" could be searched for); the overview is worth the
+     *  trade, and every other sigil already makes it. */
+    @Test fun `tilde text is COMMAND mode`() {
+        assertEquals(Mode.COMMAND, LauncherLogic.parseMode("~"))
+        assertEquals(Mode.COMMAND, LauncherLogic.parseMode("~backup"))
+        assertEquals(Mode.COMMAND, LauncherLogic.parseMode("~zzz"))
+    }
+
+    // ---- commandsMatching / resolveCommand -----------------------------------
+
+    @Test fun `a bare tilde lists every command`() {
+        assertEquals(LauncherLogic.COMMANDS.size, LauncherLogic.commandsMatching("~").size)
+    }
+
+    @Test fun `typing narrows the overview`() {
+        assertEquals(listOf("~backup"), LauncherLogic.commandsMatching("~b").map { it.first })
+        assertEquals(
+            listOf("~restore", "~restore-saf"),
+            LauncherLogic.commandsMatching("~r").map { it.first },
+        )
+        assertEquals(listOf("~restore-saf"), LauncherLogic.commandsMatching("~restore-").map { it.first })
+        assertEquals(emptyList<String>(), LauncherLogic.commandsMatching("~zzz").map { it.first })
+    }
+
+    @Test fun `an unambiguous abbreviation resolves`() {
+        assertEquals(Command.RELOAD, LauncherLogic.resolveCommand("~l"))
+        assertEquals(Command.SAVE, LauncherLogic.resolveCommand("~s"))
+        assertEquals(Command.BACKUP, LauncherLogic.resolveCommand("~b"))
+        assertEquals(Command.RESTORE_SAF, LauncherLogic.resolveCommand("~restore-"))
+    }
+
+    /** The load-bearing rule: "~restore" both NAMES a command and PREFIXES
+     *  "~restore-saf". Spelling one out in full must mean the one spelled, never the
+     *  longer neighbour — so exact has to beat prefix. */
+    @Test fun `an exact match beats a prefix`() {
+        assertEquals(Command.RESTORE, LauncherLogic.resolveCommand("~restore"))
+        assertEquals(Command.RESTORE_SAF, LauncherLogic.resolveCommand("~restore-saf"))
+    }
+
+    /** A bare "~" prefixes EVERY command, so only the exact-match alias keeps Enter on
+     *  it doing what it always did — reload, not "ambiguous, do nothing". */
+    @Test fun `a bare tilde still resolves to reload`() {
+        assertEquals(Command.RELOAD, LauncherLogic.resolveCommand("~"))
+    }
+
+    @Test fun `an ambiguous abbreviation resolves to nothing`() {
+        assertNull(LauncherLogic.resolveCommand("~r"))
+        assertNull(LauncherLogic.resolveCommand("~re"))
+        assertNull(LauncherLogic.resolveCommand("~restor"))
+    }
+
+    @Test fun `an abbreviation matching nothing resolves to nothing`() {
+        assertNull(LauncherLogic.resolveCommand("~zzz"))
+        assertNull(LauncherLogic.resolveCommand("~backupp"))
     }
 
     // ---- reorder ------------------------------------------------------------
