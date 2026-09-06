@@ -7,6 +7,13 @@
     <string name="toast_not_found">nicht gefunden: %1$s</string>
     <string name="toast_denied">verweigert: %1$s</string>
     <string name="toast_recents_empty">Noch keine zuletzt genutzten Apps — die Liste wird beim Neustart geleert</string>
+    <!-- Einmal-Befehle mit "~". %1$s in toast_backup_ok ist der Dateiname. -->
+    <string name="toast_saved">Config auf Disk geschrieben</string>
+    <string name="toast_backup_ok">Backup: Download/KolibriChopper/%1$s</string>
+    <string name="toast_backup_failed">Backup fehlgeschlagen — es wurde nichts geschrieben</string>
+    <string name="toast_restore_ok">Config wiederhergestellt</string>
+    <string name="toast_restore_failed">Wiederherstellung fehlgeschlagen — das Backup ist keine lesbare chopper.json. Es wurde nichts geändert.</string>
+    <string name="toast_restore_none">Kein Backup gefunden — erst ~backup ausführen</string>
     <!-- Gesprochene Zeilenbeschreibung für die Bearbeitungsmodi. %1$s = App-Name. -->
     <string name="a11y_hidden_on">Ausgeblendet: %1$s. Zum Einblenden doppeltippen.</string>
     <string name="a11y_hidden_off">Sichtbar: %1$s. Zum Ausblenden doppeltippen.</string>

@@ -53,6 +53,51 @@ class LauncherLogicTest {
         assertEquals(Mode.RECENTS, LauncherLogic.parseMode("?maps"))
     }
 
+    // ---- parseCommand -------------------------------------------------------
+
+    @Test fun `the four commands and the bare tilde alias parse`() {
+        assertEquals(Command.RELOAD, LauncherLogic.parseCommand("~"))
+        assertEquals(Command.RELOAD, LauncherLogic.parseCommand("~load"))
+        assertEquals(Command.SAVE, LauncherLogic.parseCommand("~save"))
+        assertEquals(Command.BACKUP, LauncherLogic.parseCommand("~backup"))
+        assertEquals(Command.RESTORE, LauncherLogic.parseCommand("~restore"))
+    }
+
+    @Test fun `commands are case-insensitive`() {
+        assertEquals(Command.BACKUP, LauncherLogic.parseCommand("~BACKUP"))
+        assertEquals(Command.RESTORE, LauncherLogic.parseCommand("~ReStOrE"))
+    }
+
+    /** Folding must be ROOT, not the device locale: a Turkish default would map the
+     *  "I" of a typed "~RESTORE" to a dotless i and the command would stop resolving. */
+    @Test fun `commands still parse under a Turkish default locale`() {
+        val original = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("tr"))
+            assertEquals(Command.RESTORE, LauncherLogic.parseCommand("~RESTORE"))
+        } finally {
+            Locale.setDefault(original)
+        }
+    }
+
+    /** The exact-match rule: "~" must not swallow a search that merely starts with it,
+     *  which is what keeps the sigil from ever needing an escape. */
+    @Test fun `a prefix or a partial is not a command`() {
+        assertNull(LauncherLogic.parseCommand("~saved"))
+        assertNull(LauncherLogic.parseCommand("~ save"))
+        assertNull(LauncherLogic.parseCommand("~sav"))
+        assertNull(LauncherLogic.parseCommand("~backup now"))
+        assertNull(LauncherLogic.parseCommand("save"))
+        assertNull(LauncherLogic.parseCommand(""))
+    }
+
+    /** A "~" command is not a Mode — parseMode must keep calling it NORMAL, or the
+     *  prompt would try to render a view for it while it is being typed. */
+    @Test fun `command text stays a NORMAL mode`() {
+        assertEquals(Mode.NORMAL, LauncherLogic.parseMode("~backup"))
+        assertEquals(Mode.NORMAL, LauncherLogic.parseMode("~"))
+    }
+
     // ---- reorder ------------------------------------------------------------
 
     @Test fun `reorder moves a row down onto the target's slot`() {

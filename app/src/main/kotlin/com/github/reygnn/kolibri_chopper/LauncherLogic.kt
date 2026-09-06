@@ -18,6 +18,11 @@ import java.util.Locale
  *  Activity, the adapter and the tests can all name it. */
 internal enum class Mode { NORMAL, HIDDEN_EDIT, FAV_EDIT, FAV_REORDER, RECENTS, TAG_FILTER }
 
+/** A one-shot "~" command, typed out in full and fired with Enter. Unlike a [Mode]
+ *  it renders nothing: it acts once and the prompt is cleared. Top-level for the
+ *  same reason [Mode] is — the Activity and the tests both name it. */
+internal enum class Command { RELOAD, SAVE, BACKUP, RESTORE }
+
 /** The two fields the ordering/search logic needs from a row: its identity [key]
  *  and its case-folded label. AppEntry implements this, and tests fake it with a
  *  plain data class — so the logic never has to construct a real ComponentName. */
@@ -39,6 +44,23 @@ internal object LauncherLogic {
         trimmed.startsWith("?") -> Mode.RECENTS
         trimmed.startsWith("#") -> Mode.TAG_FILTER
         else -> Mode.NORMAL
+    }
+
+    /**
+     * Map a trimmed prompt to its one-shot command, or null when it isn't one — in
+     * which case the caller treats the text as an ordinary prompt.
+     *
+     * Only an EXACT (case-folded) match counts. That is what keeps "~" from eating
+     * input: a search for "~something" is still just a search, so the sigil never
+     * has to be escaped. Bare "~" stays an alias for "~load" — it is the spelling
+     * that shipped first and lives in muscle memory.
+     */
+    fun parseCommand(trimmed: String): Command? = when (foldLabel(trimmed)) {
+        "~", "~load" -> Command.RELOAD
+        "~save" -> Command.SAVE
+        "~backup" -> Command.BACKUP
+        "~restore" -> Command.RESTORE
+        else -> null
     }
 
     /**

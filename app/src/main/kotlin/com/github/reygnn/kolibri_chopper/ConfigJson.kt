@@ -32,9 +32,49 @@ internal object ConfigJson {
      * (a partially-written or older file still loads what it can); malformed JSON
      * returns null so the caller can fall back to the .bak. favorites/hidden keep
      * their array order (favorites' order is the rank); names is an unordered map.
+     *
+     * This leniency is safe ONLY because the input is our own file. For a document
+     * from outside the app use [parseForeign], which refuses unrelated JSON instead
+     * of quietly turning it into an empty config.
      */
     fun parse(text: String): ChopperConfig? = try {
+        parseObject(JSONObject(text))
+    } catch (e: Exception) {
+        null
+    }
+
+    /**
+     * Parse a config that came from OUTSIDE the app — the document a "~restore" pick
+     * hands over — returning null unless it actually looks like a chopper config.
+     *
+     * [parse]'s leniency is right for OUR file in filesDir, where a missing section
+     * means an older or half-written copy and salvaging the rest beats failing. For a
+     * file the user picked out of shared storage it is dangerous: every JSON object on
+     * the device parses "successfully" into a config with NOTHING in it — an empty
+     * "{}", a settings export, some app's package.json — and adopting that silently
+     * wipes every favorite, hidden entry, custom name and tag with no error to show
+     * for it. So demand that at least one known section is present AND of the expected
+     * type before treating the document as a config at all. A real chopper.json always
+     * carries all four (serialize writes them unconditionally), so requiring one is a
+     * generous floor that still rejects unrelated JSON.
+     *
+     * Note this accepts a config whose sections are present but EMPTY — restoring a
+     * genuinely empty config is a legitimate thing to want.
+     */
+    fun parseForeign(text: String): ChopperConfig? = try {
         val j = JSONObject(text)
+        val looksLikeConfig = j.optJSONArray("hidden") != null ||
+            j.optJSONArray("favorites") != null ||
+            j.optJSONObject("names") != null ||
+            j.optJSONObject("tags") != null
+        if (looksLikeConfig) parseObject(j) else null
+    } catch (e: Exception) {
+        null
+    }
+
+    /** The shared body of [parse] and [parseForeign], once the caller has decided the
+     *  document is worth reading. May throw; both callers translate that to null. */
+    private fun parseObject(j: JSONObject): ChopperConfig {
         val loaded = ChopperConfig()
         j.optJSONArray("hidden")?.let {
             for (i in 0 until it.length()) loaded.hidden += it.getString(i)
@@ -59,8 +99,6 @@ internal object ConfigJson {
                 if (list.isNotEmpty()) loaded.tags[k] = list
             }
         }
-        loaded
-    } catch (e: Exception) {
-        null
+        return loaded
     }
 }

@@ -28,7 +28,21 @@ a launcher does not strictly need and see how small the APK gets.
   - `?` — the last 8 launched apps, newest nearest the command line. Kept in
     memory only, so it starts empty on every cold start; **Enter** relaunches the
     most recent
-  - `~` + **Enter** — reload the config from disk
+  - `~` + **Enter** — one-shot commands. Type one in full, press **Enter**; it acts
+    once and the prompt clears. Only an exact match counts, so an ordinary search
+    starting with `~` is still just a search:
+    - `~` / `~load` — reload the config from disk
+    - `~save` — write the in-memory config out now (saves are automatic anyway;
+      this is the explicit one)
+    - `~backup` — export the config to `Download/KolibriChopper/chopper.json`,
+      replacing the previous one. There is always exactly one backup, never a pile
+      of timestamped copies. An ordinary file: it survives an uninstall and can be
+      copied off the device (that's how you move a config to another phone), which
+      the internal `.bak` mirror cannot
+    - `~restore` — adopt that backup again. No file picker: one file, known name.
+      The config being replaced is written next to it as
+      `chopper-pre-restore.json`, so a restore never destroys what it overwrote
+      without a trace. A backup that doesn't parse changes nothing
 - Tap a row or press **Enter** to launch. **Enter** launches the row nearest the
   command line (the bottom-most, since the list fills upward). This holds even on an
   empty prompt — **Enter** with nothing typed launches your nearest favorite. That

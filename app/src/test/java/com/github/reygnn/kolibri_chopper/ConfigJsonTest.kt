@@ -1,6 +1,7 @@
 package com.github.reygnn.kolibri_chopper
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -126,4 +127,59 @@ class ConfigJsonTest {
         val parsed = ConfigJson.parse("""{"favorites":["x","y","x"]}""")!!
         assertEquals(listOf("x", "y"), parsed.favorites.toList())
     }
+    // ---- parseForeign -------------------------------------------------------
+
+    /** The regression this exists for: a restore fed unrelated JSON used to "succeed"
+     *  and adopt an empty config, silently wiping favorites/hidden/names/tags. */
+    @Test
+    fun `foreign JSON without a single known section is rejected`() {
+        assertNull(ConfigJson.parseForeign("{}"))
+        assertNull(ConfigJson.parseForeign("""{"name":"thing","version":"1.0.0"}"""))
+        assertNull(ConfigJson.parseForeign("""{"favourites":["a/b"]}"""))  // British spelling
+        assertNull(ConfigJson.parseForeign("[]"))
+        assertNull(ConfigJson.parseForeign("not json at all"))
+        assertNull(ConfigJson.parseForeign(""))
+    }
+
+    /** A section of the WRONG type doesn't count as one either — "hidden" as a string
+     *  is some other app's file that happens to share the word. */
+    @Test
+    fun `known keys of the wrong type do not qualify`() {
+        assertNull(ConfigJson.parseForeign("""{"hidden":true,"names":"nope"}"""))
+    }
+
+    @Test
+    fun `a single known section is enough to accept`() {
+        val onlyFavorites = ConfigJson.parseForeign("""{"favorites":["pkg/Act"]}""")
+        assertNotNull(onlyFavorites)
+        assertEquals(listOf("pkg/Act"), onlyFavorites!!.favorites.toList())
+    }
+
+    /** An all-empty but well-formed config is a legitimate thing to restore — the user
+     *  clearing everything and keeping that as a backup must still work. */
+    @Test
+    fun `a well-formed but empty config is accepted`() {
+        val empty = ConfigJson.parseForeign("""{"hidden":[],"favorites":[],"names":{},"tags":{}}""")
+        assertNotNull(empty)
+        assertTrue(empty!!.favorites.isEmpty())
+    }
+
+    /** parseForeign must agree with parse on a real file — same round-trip, just pickier
+     *  about what it lets in. */
+    @Test
+    fun `a real serialized config round-trips through parseForeign`() {
+        val cfg = ChopperConfig(
+            hidden = linkedSetOf("h/1"),
+            favorites = linkedSetOf("f/1", "f/2"),
+            names = linkedMapOf("f/1" to "Custom"),
+            tags = linkedMapOf("f/2" to mutableListOf("work")),
+        )
+        val back = ConfigJson.parseForeign(ConfigJson.serialize(cfg))
+        assertNotNull(back)
+        assertEquals(listOf("f/1", "f/2"), back!!.favorites.toList())
+        assertEquals(listOf("h/1"), back.hidden.toList())
+        assertEquals("Custom", back.names["f/1"])
+        assertEquals(listOf("work"), back.tags["f/2"])
+    }
+
 }

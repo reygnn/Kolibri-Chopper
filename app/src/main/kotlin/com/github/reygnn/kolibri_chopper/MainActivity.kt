@@ -4,12 +4,17 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
+import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
@@ -38,6 +43,7 @@ import android.window.OnBackInvokedDispatcher
 import java.io.File
 import java.io.FileDescriptor
 import java.io.FileOutputStream
+import java.io.IOException
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 
@@ -62,7 +68,15 @@ import java.util.concurrent.RejectedExecutionException
  *   !!      reorder favorites: tap a row to pick it up (marked »), tap another
  *           row to drop it there; tap the picked row again to cancel
  *   ?       recents: the last-launched apps (in memory only, empty after restart)
- *   ~       + Enter: reload chopper.json from disk (config is cached otherwise)
+ * One-shot "~" commands (type in full, then Enter — they act once and clear):
+ *   ~ / ~load  reload chopper.json from disk (the config is cached otherwise)
+ *   ~save      flush the in-memory config to disk (saves are automatic; this is
+ *              the explicit "write it now" for peace of mind)
+ *   ~backup    export the config to Download/KolibriChopper/chopper.json, replacing
+ *              the previous one — there is always exactly one backup
+ *   ~restore   adopt that backup again. No picker: one file, known name. The config
+ *              being replaced is written next to it as chopper-pre-restore.json, so
+ *              a restore never destroys the state it overwrote without a trace.
  * Long-press any row to set a custom name and its tags.
  */
 class MainActivity : Activity() {
@@ -245,13 +259,17 @@ class MainActivity : Activity() {
                 if (actionId != EditorInfo.IME_ACTION_GO && !enterDown) {
                     return@setOnEditorActionListener false
                 }
+                // A "~" command is one-shot, not a view, so it lives on Enter rather
+                // than on a live sigil — nothing happens while it is being typed.
+                val command = LauncherLogic.parseCommand(
+                    prompt.text?.toString()?.trim().orEmpty()
+                )
                 when {
-                    // "~": WM-style reload — re-read chopper.json from disk. It's a
-                    // one-shot command, not a view, so it lives on Enter, not on a
-                    // live sigil. Clearing first ("" != "~") avoids re-triggering.
-                    prompt.text?.toString()?.trim() == "~" -> {
+                    // Clear the prompt BEFORE running it ("" parses to no command),
+                    // so a second Enter can't fire the same command again.
+                    command != null -> {
                         prompt.setText("")
-                        refreshApps(reloadConfig = true)
+                        runCommand(command)
                     }
                     // In an edit mode Enter is a "done" gesture: clear the prompt
                     // back to normal instead of launching whatever sits at the top.
@@ -484,6 +502,214 @@ class MainActivity : Activity() {
         val payload = ConfigJson.serialize(cfg)
         submitIo { writeConfigFile(payload, rotateBackup = true) }
     }
+
+    /**
+     * Run a one-shot "~" command. RELOAD stays silent — its effect is the list
+     * redrawing, which is its own feedback. The other three do their work off-screen
+     * (or in another app entirely), so each one reports back with a toast; a save you
+     * cannot see happen is a save you do not trust.
+     */
+    private fun runCommand(command: Command) {
+        when (command) {
+            Command.RELOAD -> refreshApps(reloadConfig = true)
+            Command.SAVE -> {
+                saveConfig()
+                toast(getString(R.string.toast_saved))
+            }
+            Command.BACKUP -> exportConfig(BACKUP_NAME)
+            Command.RESTORE -> restoreConfig()
+        }
+    }
+
+    /**
+     * Export the CURRENT config to Download/[BACKUP_DIR] under a FIXED [name],
+     * replacing whatever was there before.
+     *
+     * There is exactly one backup and exactly one undo point — no timestamps, no
+     * accumulating pile to sift through later. That is also what lets [restoreConfig]
+     * work without a file picker: the file it has to read is the one it knows the name
+     * of.
+     *
+     * Different from the .bak mirror [writeConfigFile] keeps: that one rotates away
+     * after two saves and lives in filesDir, so it dies with the app. This one is an
+     * ordinary file in shared storage that can be copied off the device.
+     *
+     * Serialized on the main thread (like [saveConfig]: cfg is only ever mutated here,
+     * so the read is race-free), written on [ioExecutor].
+     */
+    private fun exportConfig(name: String) {
+        val payload = ConfigJson.serialize(cfg)
+        submitIo {
+            val ok = writeToDownloads(name, payload)
+            runOnUiThread {
+                // Name the file that was actually written: exportConfig serves both
+                // "~backup" and the undo point a restore leaves behind, and a toast
+                // naming the wrong one of the two is worse than none.
+                if (ok) toast(getString(R.string.toast_backup_ok, name), Toast.LENGTH_LONG)
+                else toast(getString(R.string.toast_backup_failed))
+            }
+        }
+    }
+
+    /**
+     * Publish [payload] into Download/[BACKUP_DIR] as [name] via MediaStore. Needs no
+     * storage permission: inserting into the Downloads collection is always allowed,
+     * and an app may always rewrite what it wrote itself.
+     *
+     * Overwrites IN PLACE when the entry already exists ("wt" truncates), rather than
+     * inserting again — a second insert under a taken DISPLAY_NAME does not replace it,
+     * MediaStore silently renames it to "chopper (1).json" and the promise of a single
+     * backup quietly falls apart. On the first write there is nothing to reuse, so the
+     * insert path brackets it with IS_PENDING and nothing can observe a half-written
+     * file.
+     *
+     * Never throws — a failed backup is reported and forgotten, it must not take a HOME
+     * app down with it. Returns whether the file was published.
+     */
+    private fun writeToDownloads(name: String, payload: String): Boolean {
+        val existing = findOwnDownload(name)
+        if (existing != null) {
+            return try {
+                contentResolver.openOutputStream(existing, "wt")
+                    ?.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+                    ?: throw IOException("no output stream for $existing")
+                true
+            } catch (e: Exception) {
+                Log.w("Chopper", "backup: rewriting $name failed", e)
+                false
+            }
+        }
+        val pending = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
+            put(
+                MediaStore.MediaColumns.RELATIVE_PATH,
+                "${Environment.DIRECTORY_DOWNLOADS}/$BACKUP_DIR",
+            )
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        var uri: Uri? = null
+        return try {
+            uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, pending)
+                ?: throw IOException("MediaStore refused an entry for $name")
+            val out = contentResolver.openOutputStream(uri)
+                ?: throw IOException("no output stream for $uri")
+            out.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+            contentResolver.update(
+                uri,
+                ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
+                null,
+                null,
+            )
+            true
+        } catch (e: Exception) {
+            Log.w("Chopper", "backup to Downloads failed", e)
+            // Drop the still-pending row rather than leaving an invisible stub in the
+            // user's Downloads forever.
+            uri?.let { runCatching { contentResolver.delete(it, null, null) } }
+            false
+        }
+    }
+
+    /**
+     * The MediaStore row for OUR [name] in Download/[BACKUP_DIR], or null if we never
+     * wrote it — or no longer own it: an uninstall orphans the row, and the reinstalled
+     * app can then neither see nor overwrite it.
+     *
+     * Without a storage permission a query only ever returns the app's own rows, which
+     * is exactly the scope wanted here.
+     */
+    private fun findOwnDownload(name: String): Uri? = try {
+        contentResolver.query(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.MediaColumns._ID),
+            "${MediaStore.MediaColumns.RELATIVE_PATH}=? AND " +
+                "${MediaStore.MediaColumns.DISPLAY_NAME}=?",
+            // MediaStore stores RELATIVE_PATH WITH a trailing slash; without it the
+            // comparison never matches and every backup would insert a fresh copy.
+            arrayOf("${Environment.DIRECTORY_DOWNLOADS}/$BACKUP_DIR/", name),
+            null,
+        )?.use { c ->
+            if (c.moveToFirst()) {
+                ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, c.getLong(0))
+            } else {
+                null
+            }
+        }
+    } catch (e: Exception) {
+        Log.w("Chopper", "looking up $name in Downloads failed", e)
+        null
+    }
+
+    /**
+     * "~restore": read the one backup back in. No picker — there is a single file under
+     * a known name, so there is nothing to choose.
+     *
+     * The read runs on [ioExecutor]; only the adoption returns to the main thread, where
+     * cfg lives.
+     */
+    private fun restoreConfig() {
+        submitIo {
+            val uri = findOwnDownload(BACKUP_NAME)
+            val text = uri?.let {
+                try {
+                    contentResolver.openInputStream(it)
+                        ?.use { s -> s.readBytes().toString(Charsets.UTF_8) }
+                } catch (e: Exception) {
+                    Log.w("Chopper", "restore: cannot read $it", e)
+                    null
+                }
+            }
+            runOnUiThread { adoptRestored(text) }
+        }
+    }
+
+    /**
+     * Adopt what [restoreConfig] read, back on the main thread.
+     *
+     * Order matters and is the whole safety story: PARSE first, so a missing or
+     * malformed backup aborts with the live config untouched. Only with a valid config
+     * in hand is the outgoing one written out as the undo point, and only then is the
+     * new one adopted.
+     */
+    private fun adoptRestored(text: String?) {
+        if (text == null) {
+            toast(getString(R.string.toast_restore_none), Toast.LENGTH_LONG)
+            return
+        }
+        // parseForeign, NOT parse: the lenient parser would turn any JSON object at all
+        // into an empty config and wipe everything without so much as an error.
+        val restored = ConfigJson.parseForeign(text)
+        if (restored == null) {
+            toast(getString(R.string.toast_restore_failed), Toast.LENGTH_LONG)
+            return
+        }
+        // What a restore actually adopted, so a "my favorites are gone" report can be
+        // settled from the log instead of guessed at.
+        Log.i(
+            "Chopper",
+            "restore: ${restored.favorites.size} favorites, ${restored.hidden.size} hidden, " +
+                "${restored.names.size} names, ${restored.tags.size} tagged",
+        )
+        // The undo point. Reads the still-live cfg synchronously, so it must run before
+        // the reassign below.
+        exportConfig(PRE_RESTORE_NAME)
+        // Wholesale replace, exactly like the "~" reload does — and bump configEpoch for
+        // the same reason it does: an enumeration already in flight captured the OLD
+        // cfg, and must not be allowed to hand it back over this one.
+        cfg = restored
+        configLoaded = true
+        configEpoch++
+        saveConfig()
+        toast(getString(R.string.toast_restore_ok))
+        // Re-render against the adopted config. No reloadConfig: cfg IS the newest truth
+        // here, and re-reading the file we just queued a write for could race it.
+        refreshApps()
+    }
+
+    /** Toasts are this launcher's only chrome — one helper so they stay uniform. */
+    private fun toast(text: String, duration: Int = Toast.LENGTH_SHORT) =
+        Toast.makeText(this, text, duration).show()
 
     /**
      * Atomically publish [payload] as chopper.json, writing the WHOLE file each time.
@@ -990,5 +1216,12 @@ class MainActivity : Activity() {
         const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
         const val CONFIG_FILE = "chopper.json"
         const val RECENTS_LIMIT = 8  // how many apps "?" remembers, in memory only
+        /** Sub-folder of Downloads that "~backup" writes into. */
+        const val BACKUP_DIR = "KolibriChopper"
+        // Fixed names, not timestamped ones: there is exactly ONE backup and ONE undo
+        // point, each overwritten in place. That is what lets "~restore" skip a file
+        // picker — it already knows the name of the only file it could mean.
+        const val BACKUP_NAME = "chopper.json"
+        const val PRE_RESTORE_NAME = "chopper-pre-restore.json"
     }
 }
