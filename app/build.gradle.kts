@@ -27,6 +27,21 @@ android {
         }
     }
 
+    // Drop Kotlin's reflection metadata from the APK. These kotlin/**.kotlin_builtins
+    // files are packaged as RESOURCES, not code, so R8 never touches them however
+    // aggressively it shrinks — and at ~12 KB compressed they were the second-largest
+    // item in a 49 KB APK, behind classes.dex itself.
+    //
+    // Safe only because nothing here uses Kotlin reflection: no DI framework, no
+    // kotlinx.serialization, no ::class.members. The failure mode if that ever changes
+    // is a RUNTIME KotlinReflectionNotSupportedError, not a build error — so a library
+    // added later that reflects over Kotlin types needs this narrowed or removed.
+    packaging {
+        resources {
+            excludes += "kotlin/**"
+        }
+    }
+
     // Java 21 end to end.
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
