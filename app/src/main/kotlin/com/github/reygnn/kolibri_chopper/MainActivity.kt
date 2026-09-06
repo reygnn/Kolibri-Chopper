@@ -325,6 +325,23 @@ class MainActivity : Activity() {
         }
         root.addView(listView, LinearLayout.LayoutParams(MATCH, 0, 1f))
 
+        // A clear button for the prompt, sitting at the end of the command line. Shown
+        // only while there IS something to erase (see the TextWatcher), it wipes the line
+        // back to favorites without touching the keyboard — so the user can retype right
+        // away, unlike Back, which also drops the IME.
+        val clearButton = TextView(this).apply {
+            text = "×"  // × — a clear glyph that sits right in the monospace line
+            typeface = Typeface.MONOSPACE
+            textSize = 24f
+            setTextColor(fgColorDim)
+            gravity = Gravity.CENTER
+            minWidth = 48.dp()  // a comfortable tap target next to the narrow glyph
+            contentDescription = getString(R.string.clear_prompt)
+            isFocusable = false  // keep focus (and the IME) on the prompt when tapped
+            visibility = View.GONE
+            setOnClickListener { prompt.setText("") }  // TextWatcher -> applyFilter resets to NORMAL
+        }
+
         // The prompt: a bare monospace command line at the bottom.
         prompt = EditText(this).apply {
             hint = getString(R.string.hint_search)
@@ -340,7 +357,13 @@ class MainActivity : Activity() {
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
-                override fun afterTextChanged(s: Editable?) = applyFilter(s?.toString().orEmpty())
+                override fun afterTextChanged(s: Editable?) {
+                    val text = s?.toString().orEmpty()
+                    // Track the button off the actual text, so it appears/vanishes whether
+                    // the change came from typing or from a setText("") elsewhere.
+                    clearButton.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
+                    applyFilter(text)
+                }
             })
             setOnEditorActionListener { _, actionId, event ->
                 // Act once per Enter. A soft-keyboard action arrives once with a
@@ -403,7 +426,15 @@ class MainActivity : Activity() {
                 true
             }
         }
-        root.addView(prompt, LinearLayout.LayoutParams(MATCH, WRAP))
+        // The prompt takes the row's width (weight 1); the clear button rides at its end,
+        // as tall as the row so its glyph lines up with the command line.
+        val promptRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(prompt, LinearLayout.LayoutParams(0, WRAP, 1f))
+            addView(clearButton, LinearLayout.LayoutParams(WRAP, MATCH))
+        }
+        root.addView(promptRow, LinearLayout.LayoutParams(MATCH, WRAP))
 
         // Pad the root for the system bars AND the IME together. getInsets(systemBars |
         // ime) returns the max per edge, so the bottom padding is the keyboard height
