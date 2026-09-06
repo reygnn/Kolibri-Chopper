@@ -409,7 +409,7 @@ class MainActivity : Activity() {
         submitIo {
             // Already superseded by a newer enumeration while queued: skip the work.
             if (generation != loadGeneration) return@submitIo
-            val useCfg = if (loadConfigNow) loadConfig() else cached
+            val useCfg = if (loadConfigNow) store.load() else cached
             val loaded = loadApps(useCfg)
             runOnUiThread {
                 if (generation != loadGeneration) return@runOnUiThread  // superseded
@@ -485,48 +485,16 @@ class MainActivity : Activity() {
     // ---- config -------------------------------------------------------------
 
     /**
-     * Read the config, preferring the primary chopper.json and falling back to the
-     * .bak mirror written by [saveConfig] if the primary is missing or unreadable.
-     * A missing file (fresh install) yields an empty config silently; a present but
-     * unparseable primary is logged and .bak is tried before giving up to empty. A
-     * HOME app must never throw on resume, so every error path degrades to a working
-     * (if ruleless) launcher rather than crashing — and a single torn read of the
-     * primary no longer discards the user's favorites/hidden/names/tags.
+     * The chopper.json file layer. Everything Android-specific it needs is injected here:
+     * filesDir, android.util.Log and the directory fsync. Loading, rotating and publishing
+     * itself lives in [ConfigStore], where it is unit-tested away from the Activity.
      */
-    private fun loadConfig(): ChopperConfig {
-        parseConfig(File(filesDir, CONFIG_FILE))?.let { return it }
-        parseConfig(File(filesDir, "$CONFIG_FILE.bak"))?.let { recovered ->
-            Log.w("Chopper", "primary config unreadable — recovered from .bak")
-            // Heal the primary now instead of waiting for the next toggle: rewrite the
-            // recovered config over the bad primary so later resumes stop hitting this
-            // path and we're never left running on a single copy. loadConfig() is only
-            // ever called inside refreshApps()'s submitIo block, so we're already on
-            // ioExecutor and this write is serialized with every save. rotateBackup =
-            // false: .bak IS the good copy — rotating the torn primary into it would
-            // destroy the very backup we just read from.
-            writeConfigFile(ConfigJson.serialize(recovered), rotateBackup = false)
-            return recovered
-        }
-        return ChopperConfig()
-    }
-
-    /**
-     * Parse one config file. Returns null when the file is absent (a normal state,
-     * not logged) or unparseable (logged, so real corruption is visible) — the caller
-     * decides what to fall back to. Never throws.
-     */
-    private fun parseConfig(file: File): ChopperConfig? {
-        if (!file.isFile) return null
-        val text = try {
-            file.readText()
-        } catch (e: Exception) {
-            Log.w("Chopper", "config unreadable: ${file.path}", e)
-            return null
-        }
-        // ConfigJson owns the JSON parsing (and is unit-tested); it returns null,
-        // never throws, on malformed input — log here where the file path is known.
-        return ConfigJson.parse(text)
-            ?: run { Log.w("Chopper", "config unparseable: ${file.path}"); null }
+    private val store by lazy {
+        ConfigStore(
+            dir = filesDir,
+            log = { msg, e -> if (e != null) Log.w("Chopper", msg, e) else Log.w("Chopper", msg) },
+            syncDir = ::fsyncDir,
+        )
     }
 
     /**
@@ -534,7 +502,7 @@ class MainActivity : Activity() {
      * (main) thread — cfg is only ever mutated there, so the read is race-free and
      * the result is an immutable snapshot — then hands the write to [ioExecutor] so a
      * toggle/rename tap never blocks on disk. rotateBackup = true: a normal save
-     * keeps a last-known-good .bak mirror (see [writeConfigFile]).
+     * keeps a last-known-good .bak mirror (see [ConfigStore.write]).
      */
     private fun saveConfig(onDone: ((Boolean) -> Unit)? = null) {
         val payload = ConfigJson.serialize(cfg)
@@ -542,7 +510,7 @@ class MainActivity : Activity() {
         // other caller saves as a side effect of a tap that already shows its result on
         // screen, and passes nothing.
         val accepted = submitIo {
-            val ok = writeConfigFile(payload, rotateBackup = true)
+            val ok = store.write(payload, rotateBackup = true)
             onDone?.let { cb -> runOnUiThread { cb(ok) } }
         }
         // Refused outright (the IO thread is shutting down): nothing will ever run, so
@@ -837,90 +805,6 @@ class MainActivity : Activity() {
     /** Toasts are this launcher's only chrome — one helper so they stay uniform. */
     private fun toast(text: String, duration: Int = Toast.LENGTH_SHORT) =
         Toast.makeText(this, text, duration).show()
-
-    /**
-     * Atomically publish [payload] as chopper.json, writing the WHOLE file each time.
-     * MUST run on [ioExecutor] (the sole disk-writing thread) so concurrent writes
-     * stay serialized on the temp file. Never throws — a failure degrades durability,
-     * not correctness, and is logged: a HOME app must not crash on a bad save.
-     *
-     * Sequence: temp-write + fsync-contents -> rotate -> publish + fsync-dir.
-     *   - fsync of the temp CONTENTS closes the window where the rename's metadata
-     *     could reach disk ahead of the bytes (which would publish a truncated file).
-     *   - the final fsync of the DIRECTORY makes the rename itself durable: rename is
-     *     atomic for visibility but not durability, so without it a power-cut can roll
-     *     the publish back to the previous file — a lost most-recent toggle, never
-     *     corruption.
-     *
-     * [rotateBackup] moves the current primary into .bak (by rename, never an unsynced
-     * in-place copy that could tear it) before publishing — but only after re-parsing
-     * it, so a primary that silently went bad is never promoted over the good backup. A
-     * normal save wants this. A HEAL after recovering from .bak must NOT rotate at all:
-     * there the on-disk primary is the torn file we're replacing and .bak holds the
-     * ONLY good copy — rotating would overwrite that good .bak with garbage. The heal
-     * just replaces the bad primary and leaves .bak untouched, so both end up holding
-     * the config.
-     */
-    private fun writeConfigFile(payload: String, rotateBackup: Boolean): Boolean {
-        val tmp = File(filesDir, "$CONFIG_FILE.tmp")
-        val dst = File(filesDir, CONFIG_FILE)
-        val bak = File(filesDir, "$CONFIG_FILE.bak")
-        return try {
-            // (1) Write to the temp file and force its bytes onto disk BEFORE anything
-            //     is published, so a rename can never expose contents that aren't there.
-            FileOutputStream(tmp).use { fos ->
-                fos.write(payload.toByteArray(Charsets.UTF_8))
-                fos.flush()
-                fos.fd.sync()
-            }
-
-            // (2) Rotate the current good primary into .bak by RENAME (atomic, can't
-            //     tear) — unless we're healing, where the on-disk primary is bad and
-            //     .bak is the good copy we must not clobber. We do NOT delete .bak
-            //     first: renaming onto it replaces it atomically on POSIX, and leaving
-            //     it keeps a good copy present at all times. On the first save dst
-            //     doesn't exist yet, so .bak appears from save #2 onward.
-            //
-            //     But rename promotes the primary UNVALIDATED, so first re-parse it and
-            //     skip the rotation if it no longer parses. Since a cold start serves
-            //     cfg from memory, a primary that silently went bad afterwards (bit rot,
-            //     or a torn in-place fallback at step 3 last time) would otherwise be
-            //     rotated straight onto .bak — destroying the last known-good backup.
-            //     This read is the only place that re-checks the on-disk primary; the
-            //     preserved .bak refreshes on the next save once the primary is good
-            //     again. One read+parse of a tiny file per save is a cheap insurance.
-            if (rotateBackup && dst.exists()) {
-                when {
-                    parseConfig(dst) == null ->
-                        Log.w("Chopper", "config primary invalid — keeping .bak, skipping rotate")
-                    !dst.renameTo(bak) ->
-                        Log.w("Chopper", "config .bak rotate failed (non-fatal)")
-                }
-            }
-
-            // (3) Publish the new primary. After a rotation dst is gone, so this
-            //     renames onto a FREE name — accepted by every filesystem, and it
-            //     sidesteps the old "refuse rename onto existing target" problem. The
-            //     in-place fallback only fires on an exotic FS that still refused; it
-            //     fsyncs (unlike the old copyTo), and .bak still holds a good config,
-            //     so even a torn in-place dst stays recoverable.
-            if (!tmp.renameTo(dst)) {
-                FileOutputStream(dst).use { fos ->
-                    fos.write(payload.toByteArray(Charsets.UTF_8))
-                    fos.flush()
-                    fos.fd.sync()
-                }
-                tmp.delete()
-            }
-
-            // (4) Make the renames themselves durable (see the method comment above).
-            fsyncDir(filesDir)
-            true
-        } catch (e: Exception) {
-            Log.w("Chopper", "config save failed", e)
-            false
-        }
-    }
 
     /**
      * fsync a *directory* so a preceding rename() is durable, not merely visible.
@@ -1359,7 +1243,6 @@ class MainActivity : Activity() {
     private companion object {
         const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
-        const val CONFIG_FILE = "chopper.json"
         const val RECENTS_LIMIT = 8  // how many apps "?" remembers, in memory only
         /** Sub-folder of Downloads that "~backup" writes into. */
         const val BACKUP_DIR = "KolibriChopper"
