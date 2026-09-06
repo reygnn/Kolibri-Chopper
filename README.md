@@ -20,7 +20,11 @@ a launcher does not strictly need and see how small the APK gets.
     that tag's apps
   - `#text` — tag filter: the apps under every tag starting with `text` (so `#gam`
     finds your `games` apps). Tap or **Enter** to launch. Tags are assigned in the
-    long-press dialog; a tagged app shows here even when hidden
+    long-press dialog or in bulk with `##`; a tagged app shows here even when hidden
+  - `##` — edit tags in bulk: lists the tags in use, tap one and you get **every** app
+    with an `[x]`/`[ ]` for that tag; tap a row to toggle it, saved immediately. This
+    is the way to put one tag on many apps — the long-press dialog stays the way to
+    invent a tag and to set several tags on one app
   - `-[text]` — edit hidden: tap a row to toggle `[x]`, saved immediately
   - `![text]` — edit favorites: tap a row to toggle `[x]`, saved immediately
   - `!!` — reorder favorites: tap a row to pick it up (marked `»`), tap another

@@ -53,6 +53,57 @@ class LauncherLogicTest {
         assertEquals(Mode.RECENTS, LauncherLogic.parseMode("?maps"))
     }
 
+    /** "##" must be tested BEFORE "#", the same trap "!!" vs "!" sets. If the order in
+     *  parseMode ever flips, "##" silently becomes a tag filter for a tag named "#". */
+    @Test fun `double hash is TAG_EDIT, single hash stays TAG_FILTER`() {
+        assertEquals(Mode.TAG_EDIT, LauncherLogic.parseMode("##"))
+        assertEquals(Mode.TAG_EDIT, LauncherLogic.parseMode("##work"))
+        assertEquals(Mode.TAG_FILTER, LauncherLogic.parseMode("#"))
+        assertEquals(Mode.TAG_FILTER, LauncherLogic.parseMode("#work"))
+    }
+
+    // ---- toggleTag ----------------------------------------------------------
+
+    @Test fun `toggleTag adds a tag an app does not carry`() {
+        assertEquals(listOf("work"), LauncherLogic.toggleTag(null, "work"))
+        assertEquals(listOf("games", "work"), LauncherLogic.toggleTag(listOf("games"), "work"))
+    }
+
+    @Test fun `toggleTag removes a tag an app already carries`() {
+        assertEquals(listOf("games"), LauncherLogic.toggleTag(listOf("games", "work"), "work"))
+    }
+
+    /** The caller must store this as a REMOVED key, never an empty list — ConfigJson
+     *  drops empty tag lists on both sides, so keeping one would make the in-memory
+     *  shape disagree with the file. */
+    @Test fun `toggleTag can empty an app's tag list`() {
+        assertEquals(emptyList<String>(), LauncherLogic.toggleTag(listOf("work"), "work"))
+    }
+
+    /** Stored tags are canonical, so an unfolded needle must not create a near-duplicate. */
+    @Test fun `toggleTag folds the incoming tag`() {
+        assertEquals(emptyList<String>(), LauncherLogic.toggleTag(listOf("work"), "WORK"))
+        assertEquals(listOf("work"), LauncherLogic.toggleTag(null, "Work"))
+    }
+
+    /** Same ROOT-folding reason as everywhere else: a Turkish default locale must not
+     *  turn a typed "##WORK" into a dotless-i tag that never matches the stored one. */
+    @Test fun `toggleTag folds with ROOT, not the device locale`() {
+        val original = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("tr"))
+            assertEquals(emptyList<String>(), LauncherLogic.toggleTag(listOf("i"), "I"))
+        } finally {
+            Locale.setDefault(original)
+        }
+    }
+
+    @Test fun `toggleTag does not mutate the list it is given`() {
+        val current = listOf("work")
+        LauncherLogic.toggleTag(current, "games")
+        assertEquals(listOf("work"), current)
+    }
+
     // ---- parseCommand -------------------------------------------------------
 
     @Test fun `the four commands and the bare tilde alias parse`() {

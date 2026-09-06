@@ -16,7 +16,9 @@ import java.util.Locale
 
 /** The command-line mode, chosen by the prompt's leading sigil. Top-level so the
  *  Activity, the adapter and the tests can all name it. */
-internal enum class Mode { NORMAL, HIDDEN_EDIT, FAV_EDIT, FAV_REORDER, RECENTS, TAG_FILTER, COMMAND }
+internal enum class Mode {
+    NORMAL, HIDDEN_EDIT, FAV_EDIT, FAV_REORDER, RECENTS, TAG_FILTER, TAG_EDIT, COMMAND
+}
 
 /** A one-shot "~" command, typed out in full and fired with Enter. Unlike a [Mode]
  *  it renders nothing: it acts once and the prompt is cleared. Top-level for the
@@ -34,11 +36,13 @@ internal interface Ordered {
 internal object LauncherLogic {
 
     /**
-     * Map a trimmed prompt to its mode. "!!" MUST be tested before "!": the reorder
-     * sigil is a strict prefix of the edit one, so the order here is load-bearing.
+     * Map a trimmed prompt to its mode. Two doubled sigils MUST be tested before their
+     * single form — "!!" before "!", "##" before "#" — because each is a strict prefix
+     * of the other. The order of these branches is load-bearing, not cosmetic.
      */
     fun parseMode(trimmed: String): Mode = when {
         trimmed.startsWith("!!") -> Mode.FAV_REORDER
+        trimmed.startsWith("##") -> Mode.TAG_EDIT
         trimmed.startsWith("-") -> Mode.HIDDEN_EDIT
         trimmed.startsWith("!") -> Mode.FAV_EDIT
         trimmed.startsWith("?") -> Mode.RECENTS
@@ -197,6 +201,25 @@ internal object LauncherLogic {
      */
     fun parseTags(raw: String): List<String> =
         raw.split(',').map { foldLabel(it.trim()) }.filter { it.isNotEmpty() }.distinct()
+
+    /**
+     * Add or remove [tag] on an app whose current tags are [current], returning the new
+     * list. Folds [tag] with ROOT so a typed "##Work" hits the stored "work" — stored tag
+     * values are canonical (see [parseTags]), and a comparison against an unfolded needle
+     * would silently create a second, near-identical tag.
+     *
+     * Returns a possibly EMPTY list. The caller must store that as a removed key, never as
+     * an empty list: serialize and parse both drop empty tag lists, so keeping one would
+     * make the in-memory shape disagree with the file it was just written from.
+     *
+     * Order is append-at-the-end, matching how the long-press dialog's [parseTags] records
+     * them — first-entered stays first.
+     */
+    fun toggleTag(current: List<String>?, tag: String): List<String> {
+        val folded = foldLabel(tag)
+        val list = current.orEmpty()
+        return if (folded in list) list - folded else list + folded
+    }
 
     /**
      * Every distinct tag ever defined, sorted — the suggestion pool for the tag

@@ -63,7 +63,11 @@ import java.util.concurrent.RejectedExecutionException
  *   *       normal: the full app drawer (every non-hidden app)
  *   #       tags: lists the tags in use; tap one to drill into its apps
  *   #text   tag filter: apps under every tag prefix-matching [text], tap/Enter
- *           launches. Tags are assigned via the long-press dialog
+ *           launches. Tags are assigned via the long-press dialog, or in bulk with "##"
+ *   ##      edit tags: lists the tags in use; tap one to get EVERY app with an
+ *           [x]/[ ] for that tag, tap a row to toggle it. The long-press dialog stays
+ *           the way to invent a tag and to set several on one app; this is the way to
+ *           put one tag on many apps
  *   -[text] edit hidden:    tap a row to toggle its [x], persisted immediately
  *   ![text] edit favorites: tap a row to toggle its [x], persisted immediately
  *   !!      reorder favorites: tap a row to pick it up (marked »), tap another
@@ -139,6 +143,12 @@ class MainActivity : Activity() {
     // again cancels. Reset whenever the mode is left (see applyFilter), so a stale
     // key from an old reorder session can never move the wrong row later.
     private var reorderPick: String? = null
+
+    // In TAG_EDIT: the tag whose membership the checkboxes show, i.e. whatever follows
+    // "##", folded. Null while the bare-"##" overview is up (nothing chosen yet), so the
+    // row binder and the tap handler have one place to ask "which tag is this about?"
+    // instead of re-parsing the prompt. Recomputed by applyFilter on every keystroke.
+    private var tagEditTag: String? = null
 
     private var allApps: List<AppEntry> = emptyList()
     // What the ListView currently shows: app rows in every mode, or tag-name rows in
@@ -222,7 +232,10 @@ class MainActivity : Activity() {
                 when (val row = shown.getOrNull(position)) {
                     // A tag row (bare "#") drills into that tag's apps by rewriting the
                     // prompt — the TextWatcher then re-filters through applyFilter.
-                    is TagRow -> prompt.setText("#${row.name}")
+                    // The same row type serves both overviews; which sigil it drills
+                    // into is decided by the mode it was rendered in.
+                    is TagRow ->
+                        prompt.setText(if (mode == Mode.TAG_EDIT) "##${row.name}" else "#${row.name}")
                     // Clear FIRST, exactly as the Enter path does: setText fires the
                     // TextWatcher synchronously, so the mode is back to NORMAL before
                     // the command runs and the re-render can't land on a stale overview.
@@ -235,6 +248,7 @@ class MainActivity : Activity() {
                         Mode.HIDDEN_EDIT -> toggle(cfg.hidden, row.entry.key)
                         Mode.FAV_EDIT    -> toggle(cfg.favorites, row.entry.key)
                         Mode.FAV_REORDER -> reorderTap(row.entry.key)
+                        Mode.TAG_EDIT -> toggleTagOn(row.entry.key)
                         // The "~" overview holds CommandRows, never AppRows — its taps
                         // are handled by the CommandRow branch above. Named only to keep
                         // this when exhaustive.
@@ -299,6 +313,14 @@ class MainActivity : Activity() {
                     // the overview is right there showing what is still in the running —
                     // one more keystroke settles it.
                     mode == Mode.COMMAND -> {}
+                    // "##" is two views behind one sigil, so it cannot join the read
+                    // modes below: with the overview up Enter drills into the nearest tag,
+                    // with the checkbox list up it is a plain "done". It must never reach
+                    // the launch branch — Enter in an edit mode has never launched.
+                    mode == Mode.TAG_EDIT -> when (val last = shown.lastOrNull()) {
+                        is TagRow -> prompt.setText("##${last.name}")
+                        else -> prompt.setText("")
+                    }
                     // In an edit mode Enter is a "done" gesture: clear the prompt
                     // back to normal instead of launching whatever sits at the top.
                     // lastOrNull, not firstOrNull: with isStackFromBottom the list
@@ -833,6 +855,26 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * "##tag": put the chosen tag on [key] or take it off, persisted immediately like the
+     * other edit modes' checkboxes.
+     *
+     * Deliberately not routed through [toggle]: that one flips membership in a flat
+     * collection, while a tag lives in a per-app LIST inside a map, and an app left with
+     * no tags must lose its KEY rather than keep an empty list (ConfigJson drops empty
+     * lists on both sides, so an empty one would vanish on the next round trip and the
+     * in-memory shape would stop matching the file). The epoch/save/notify tail is
+     * identical, and identical for the same reasons — see [toggle].
+     */
+    private fun toggleTagOn(key: String) {
+        val tag = tagEditTag ?: return
+        val next = LauncherLogic.toggleTag(cfg.tags[key], tag)
+        if (next.isEmpty()) cfg.tags.remove(key) else cfg.tags[key] = next.toMutableList()
+        ++configEpoch
+        saveConfig()
+        adapter.notifyDataSetChanged()
+    }
+
     private fun toggle(coll: MutableCollection<String>, key: String) {
         if (!coll.remove(key)) coll.add(key)  // add appends a favorite at the end
         // Bump ONLY the config epoch, not loadGeneration. A "~" reload replaces cfg
@@ -1062,11 +1104,22 @@ class MainActivity : Activity() {
         // A pickup belongs to a single reorder session: drop it the moment we're no
         // longer in FAV_REORDER, so nothing stale survives into another mode.
         if (mode != Mode.FAV_REORDER) reorderPick = null
+        // Whatever follows "##" IS the tag; blank means the overview is showing and no
+        // tag is chosen yet. Folded here once, so nothing downstream has to remember to.
+        tagEditTag = if (mode == Mode.TAG_EDIT) {
+            q.substring(2).trim().takeIf { it.isNotEmpty() }?.let(LauncherLogic::foldLabel)
+        } else {
+            null
+        }
         // "#" is the one mode that can show tag rows instead of app rows: a bare "#"
         // lists the in-use tags (tap one to drill into its apps); once any text follows
         // it, it shows the apps of every tag PREFIX-matching that text. Every other
         // mode maps its app list straight to AppRow.
-        shown = if (mode == Mode.COMMAND) {
+        shown = if (mode == Mode.TAG_EDIT && tagEditTag == null) {
+            // Bare "##": the same overview the bare "#" shows, but tapping a row drills
+            // into the checkbox list rather than into a filter.
+            LauncherLogic.tagsInUse(allApps, cfg.tags).map(::TagRow)
+        } else if (mode == Mode.COMMAND) {
             // The "~" overview: the commands still matching what has been typed. Not an
             // app list at all, so it bypasses the AppRow mapping below entirely.
             LauncherLogic.commandsMatching(q).map { (name, cmd) -> CommandRow(name, cmd) }
@@ -1085,6 +1138,10 @@ class MainActivity : Activity() {
             // Edit modes list EVERY app (so anything can be toggled), narrowed by
             // whatever follows the sigil. Membership shows as [x]/[ ] in getView.
             Mode.HIDDEN_EDIT, Mode.FAV_EDIT -> LauncherLogic.search(allApps, q.substring(1).trim())
+            // "##tag": EVERY app, so anything can be tagged — the same reasoning as the
+            // other edit modes. Deliberately NOT reordered to put tagged apps first: rows
+            // would jump under the finger as you tick them, which is the opposite of fast.
+            Mode.TAG_EDIT -> allApps
             // Handled above, before this app-list mapping — named here only to keep the
             // when exhaustive, so a future Mode cannot be silently forgotten.
             Mode.COMMAND -> emptyList()
@@ -1208,6 +1265,8 @@ class MainActivity : Activity() {
                 // "» " marks the picked-up row; "  " keeps the others column-aligned
                 // (same two-cell width in the monospace face).
                 Mode.FAV_REORDER -> (if (key == reorderPick) "» " else "  ") + entry.label
+                Mode.TAG_EDIT ->
+                    (if (tagEditTag in cfg.tags[key].orEmpty()) "[x] " else "[ ] ") + entry.label
                 // COMMAND renders no app rows at all (see applyFilter); it rides along
                 // with the undecorated cases so this stays exhaustive without inventing a
                 // glyph for a row that cannot exist.
@@ -1234,6 +1293,12 @@ class MainActivity : Activity() {
                         else                -> R.string.a11y_reorder_drop   // a drop target
                     },
                     entry.label,
+                )
+                Mode.TAG_EDIT -> getString(
+                    if (tagEditTag in cfg.tags[key].orEmpty()) R.string.a11y_tag_on
+                    else R.string.a11y_tag_off,
+                    entry.label,
+                    tagEditTag.orEmpty(),
                 )
                 Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER, Mode.COMMAND -> null
             }

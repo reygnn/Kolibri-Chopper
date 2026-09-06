@@ -22,6 +22,9 @@
     <string name="a11y_hidden_off">Visible: %1$s. Double-tap to hide.</string>
     <string name="a11y_fav_on">Favorite: %1$s. Double-tap to remove.</string>
     <string name="a11y_fav_off">Not a favorite: %1$s. Double-tap to add.</string>
+    <!-- Bulk tag editing ("##tag"). %1$s is the app label, %2$s the tag. -->
+    <string name="a11y_tag_on">Tagged %2$s: %1$s. Double-tap to remove the tag.</string>
+    <string name="a11y_tag_off">Not tagged %2$s: %1$s. Double-tap to add the tag.</string>
     <!-- Reorder-favorites mode (the "»" grab marker doesn't read aloud sensibly). -->
     <string name="a11y_reorder_pick">%1$s. Double-tap to pick up for reordering.</string>
     <string name="a11y_reorder_picked">Picked up: %1$s. Double-tap to cancel.</string>
