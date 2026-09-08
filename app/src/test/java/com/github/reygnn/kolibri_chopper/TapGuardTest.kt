@@ -25,6 +25,14 @@ class TapGuardTest {
         assertFalse(TapGuard.stillValid(downGeneration = 7, shownGeneration = 99))
     }
 
+    @Test fun `an out-of-order pair also vetoes - the guard is strict equality, not a comparison`() {
+        // shownGeneration only ever grows, so down > shown does not arise in practice; the
+        // point is that the guard is strict EQUALITY in BOTH directions. The down < shown
+        // test above already rules out a `<=` slip; this rules out a `>=` one, which would
+        // otherwise let a (hypothetical) down-ahead-of-shown gesture through unnoticed.
+        assertFalse(TapGuard.stillValid(downGeneration = 8, shownGeneration = 7))
+    }
+
     @Test fun `NO_TOUCH passes for any current generation - accessibility or hardware click`() {
         // An action invoked directly, with no MotionEvent, carries no generation to
         // compare and must never be vetoed, whatever the list is currently at.
