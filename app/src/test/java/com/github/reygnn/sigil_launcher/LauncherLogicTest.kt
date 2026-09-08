@@ -489,6 +489,63 @@ class LauncherLogicTest {
         assertEquals(listOf("b", "d", "c", "a"), result.keys())
     }
 
+    // ---- drawerStartingWith --------------------------------------------------
+
+    /** An empty prefix IS the bare "*" drawer: it must equal the ordered drawer exactly,
+     *  the identity the NORMAL branch relies on when "*".dropLast(1) yields "". */
+    @Test fun `drawerStartingWith with an empty prefix equals the ordered drawer`() {
+        val all = rows("a", "b", "c")
+        val hidden = setOf("b")
+        val favorites = linkedSetOf("c")
+        val expected = LauncherLogic.orderWithFavorites(
+            LauncherLogic.drawer(all, hidden, favorites), favorites,
+        ).keys()
+        val actual = LauncherLogic.drawerStartingWith(all, hidden, favorites, "").keys()
+        assertEquals(expected, actual)
+    }
+
+    /** The ordering path THROUGH the prefix filter — every rowsFor star test narrows to
+     *  0/1 app, so this is the only place a narrowed result with >1 element pins that
+     *  orderWithFavorites still runs AFTER filtering. Dropping the ordering from the
+     *  filtered path (or ordering before filtering) would slip past those tests but fail
+     *  here. */
+    @Test fun `drawerStartingWith orders favorites last within the narrowed subset`() {
+        // apple, applet, apricot share "ap"; banana is filtered out. applet is the favorite.
+        val all = rows("apple", "applet", "apricot", "banana")
+        val result = LauncherLogic.drawerStartingWith(all, emptySet(), linkedSetOf("applet"), "ap")
+        assertEquals(listOf("apple", "apricot", "applet"), result.keys())
+    }
+
+    /** Prefix filtering drops a hidden non-favorite (it never enters the drawer) but keeps a
+     *  hidden favorite — favoriting overrides hiding, the same contract the bare drawer holds. */
+    @Test fun `drawerStartingWith drops a hidden non-favorite but keeps a hidden favorite`() {
+        val all = rows("bat", "ball", "bay")
+        // ball hidden: without a favorite it is gone; as a favorite it survives the filter.
+        assertEquals(listOf("bat", "bay"), LauncherLogic.drawerStartingWith(all, setOf("ball"), emptySet(), "ba").keys())
+        assertEquals(
+            listOf("bat", "bay", "ball"),
+            LauncherLogic.drawerStartingWith(all, setOf("ball"), linkedSetOf("ball"), "ba").keys(),
+        )
+    }
+
+    /** ROOT-fold, like every other matcher here: a typed "AP" must match a stored "apple"
+     *  and a Turkish default locale must not turn the prefix's "i" into a dotless one. */
+    @Test fun `drawerStartingWith folds the prefix with ROOT`() {
+        val all = listOf(Row("p/insta", LauncherLogic.foldLabel("Instagram")))
+        assertEquals(listOf("p/insta"), LauncherLogic.drawerStartingWith(all, emptySet(), emptySet(), "IN").keys())
+        val original = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.of("tr", "TR"))
+            assertEquals(listOf("p/insta"), LauncherLogic.drawerStartingWith(all, emptySet(), emptySet(), "I").keys())
+        } finally {
+            Locale.setDefault(original)
+        }
+    }
+
+    @Test fun `drawerStartingWith over an empty app list is empty`() {
+        assertEquals(emptyList<String>(), LauncherLogic.drawerStartingWith(emptyList<Row>(), emptySet(), emptySet(), "x").keys())
+    }
+
     // ---- pushRecent ---------------------------------------------------------
 
     @Test fun `pushRecent puts a new key at the front`() {

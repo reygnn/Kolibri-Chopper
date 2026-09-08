@@ -103,6 +103,34 @@ class LauncherRowsTest {
         assertEquals(listOf("com.b/B"), appKeys(rows))
     }
 
+    @Test fun `a star prefix matching several apps orders favorites last`() {
+        // The shared fixture never gives >1 match for a prefix, so build one that does:
+        // three "ap" apps (one a favorite) plus a non-matching banana that must drop out.
+        val local = listOf(
+            Fake("com.apple/A", "Apple"),
+            Fake("com.applet/A", "Applet"),
+            Fake("com.apricot/A", "Apricot"),
+            Fake("com.banana/A", "Banana"),
+        )
+        val rows = LauncherLogic.rowsFor(
+            Mode.NORMAL, "ap*", local, emptySet(), linkedSetOf("com.applet/A"),
+            emptyMap(), emptyList(), null,
+        )
+        // Non-favorites in incoming order, the favorite sinks last (nearest the prompt).
+        assertEquals(listOf("com.apple/A", "com.apricot/A", "com.applet/A"), appKeys(rows))
+    }
+
+    @Test fun `a double star matches nothing since no label starts with a literal star`() {
+        assertTrue(appKeys(rowsFor(Mode.NORMAL, "**")).isEmpty())
+    }
+
+    @Test fun `a star prefix over an empty app list is empty`() {
+        val rows = LauncherLogic.rowsFor(
+            Mode.NORMAL, "a*", emptyList<Fake>(), emptySet(), emptySet(), emptyMap(), emptyList(), null,
+        )
+        assertTrue(appKeys(rows).isEmpty())
+    }
+
     @Test fun `plain search spans all apps including hidden ones`() {
         assertEquals(listOf("com.b/B"), appKeys(rowsFor(Mode.NORMAL, "brav")))
     }
