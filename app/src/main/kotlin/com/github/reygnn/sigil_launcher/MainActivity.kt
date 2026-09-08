@@ -287,7 +287,7 @@ class MainActivity : Activity() {
                     // A tag row drills into that tag's apps by rewriting the prompt — the
                     // TextWatcher then re-filters. The same row type serves both overviews;
                     // which sigil it drills into is decided by the mode it was rendered in.
-                    is TapAction.SetPrompt -> prompt.setText(action.text)
+                    is TapAction.SetPrompt -> setPrompt(action.text)
                     TapAction.None -> {}  // stale position, or a row this mode ignores
                 }
             }
@@ -387,9 +387,11 @@ class MainActivity : Activity() {
                     is EnterAction.Run -> { prompt.setText(""); runCommand(action.command) }
                     is EnterAction.LaunchApp -> launch(action.entry)
                     // Drill a tag ("#tag"/"##tag"), open the drawer ("*") or clear back to
-                    // NORMAL (""). setText drives the TextWatcher exactly as typing does, so
-                    // the drawer/filter and the visible command line stay one source of truth.
-                    is EnterAction.SetPrompt -> prompt.setText(action.text)
+                    // NORMAL (""). setPrompt drives the TextWatcher exactly as typing does, so
+                    // the drawer/filter and the visible command line stay one source of truth —
+                    // and it parks the caret explicitly (before a trailing "*"), which is what
+                    // makes the "*"-then-type prefix filter actually work on-device.
+                    is EnterAction.SetPrompt -> setPrompt(action.text)
                     EnterAction.None -> {}
                 }
                 true
@@ -1153,6 +1155,20 @@ class MainActivity : Activity() {
             Log.w("Sigil", "launch failed: ${entry.component}", e)
             Toast.makeText(this, getString(R.string.toast_not_found, entry.label), Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /**
+     * Set the prompt programmatically AND place the caret deliberately, instead of trusting
+     * [android.widget.EditText.setText] to leave it where we need it. setText's post-set caret
+     * position is device/IME-dependent: some park it at the END, which turned the "*" drawer
+     * shortcut's next keystroke into "*a" (substring search, no match) rather than "a*" (the
+     * prefix filter) — the feature dead on those devices though every test passed. The caret
+     * target is the pure [LauncherLogic.caretFor] (JVM-pinned), so it can't drift with the
+     * widget. setText fires the TextWatcher synchronously, exactly as typing does.
+     */
+    private fun setPrompt(text: String) {
+        prompt.setText(text)
+        prompt.setSelection(LauncherLogic.caretFor(text))
     }
 
     private fun showKeyboard() {

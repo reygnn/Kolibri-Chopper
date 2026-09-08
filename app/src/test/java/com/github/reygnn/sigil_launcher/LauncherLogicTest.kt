@@ -575,6 +575,23 @@ class LauncherLogicTest {
         assertEquals(emptyList<String>(), LauncherLogic.drawerStartingWith(emptyList<Row>(), emptySet(), emptySet(), "x").keys())
     }
 
+    // ---- caretFor ------------------------------------------------------------
+
+    /** A trailing "*" parks the caret BEFORE the star, so typing grows "a*", "ab*", … and the
+     *  prefix filter fires. This is the exact behaviour a device that parks setText's caret at
+     *  the end broke — turning "a*" into "*a" and killing the feature. */
+    @Test fun `caretFor parks the caret before a trailing star`() {
+        assertEquals(0, LauncherLogic.caretFor("*"))
+        assertEquals(2, LauncherLogic.caretFor("ab*"))
+    }
+
+    /** Every non-star prompt gets the caret at the END, the natural spot for a filled field. */
+    @Test fun `caretFor puts the caret at the end for a non-star prompt`() {
+        assertEquals(0, LauncherLogic.caretFor(""))
+        assertEquals(5, LauncherLogic.caretFor("#work"))
+        assertEquals(6, LauncherLogic.caretFor("##work"))
+    }
+
     // ---- pushRecent ---------------------------------------------------------
 
     @Test fun `pushRecent puts a new key at the front`() {

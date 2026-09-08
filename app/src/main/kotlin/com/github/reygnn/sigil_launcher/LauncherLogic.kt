@@ -111,6 +111,24 @@ internal object LauncherLogic {
     }
 
     /**
+     * Where the text caret belongs after the Activity programmatically sets the prompt to
+     * [text] (the SetPrompt side of [enterAction]/[tapAction]).
+     *
+     * A trailing "*" is a wildcard the user types a prefix IN FRONT of ("a*" = apps starting
+     * with "a"), so the caret parks just before it — position length-1. Every other prompt
+     * ("#tag", "##tag", "") gets the caret at the END, the natural spot for a filled field.
+     *
+     * This exists because [android.widget.EditText.setText] does NOT reliably leave the caret
+     * where we need it: on some devices/IMEs it parks at the END, which turned the "*" drawer
+     * shortcut's next keystroke into "*a" (a substring search for "*a", matching nothing)
+     * instead of "a*" (the prefix filter) — the whole feature silently dead. Robolectric's
+     * EditText happens to park it at 0, so a widget test could not catch this; a caller that
+     * sets the caret from THIS value, rather than trusting setText, is the fix. Pure so it is
+     * pinned by a JVM test regardless of any setText quirk.
+     */
+    fun caretFor(text: String): Int = if (text.endsWith("*")) text.length - 1 else text.length
+
+    /**
      * Every "~" command with its canonical spelling. One list, so the overview rows,
      * the abbreviation resolver and the exact parser can never drift apart — adding a
      * command here is the whole change.
