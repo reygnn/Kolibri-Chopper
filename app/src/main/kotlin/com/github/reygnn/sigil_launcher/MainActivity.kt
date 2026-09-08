@@ -1168,7 +1168,19 @@ class MainActivity : Activity() {
      */
     private fun setPrompt(text: String) {
         prompt.setText(text)
+        // Set the caret inline for IMEs that respect it (no visible jump)...
         prompt.setSelection(LauncherLogic.caretFor(text))
+        // ...and AGAIN after the current message/IME transaction. A programmatic setText on a
+        // focused field restarts the input connection, and on some IMEs that restart parks the
+        // caret at the END right after our inline setSelection — which turned the "*" drawer
+        // shortcut's next keystroke into "*a" (no match) instead of "a*". Posting re-asserts the
+        // caret once the restart has settled; recompute from the LIVE text so the target can't go
+        // stale if the field changed underneath. (This IME reset is not reproducible in
+        // Robolectric — its EditText parks the caret at 0 — so it can only be verified on-device.)
+        prompt.post {
+            val live = prompt.text?.toString().orEmpty()
+            prompt.setSelection(LauncherLogic.caretFor(live))
+        }
     }
 
     private fun showKeyboard() {
