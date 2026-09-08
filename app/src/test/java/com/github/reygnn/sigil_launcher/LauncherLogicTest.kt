@@ -180,6 +180,35 @@ class LauncherLogicTest {
         assertEquals(listOf("work"), current)
     }
 
+    // ---- resolveNameOverride ------------------------------------------------
+
+    @Test fun `resolveNameOverride clears on an empty name`() {
+        assertNull(LauncherLogic.resolveNameOverride("", "Gmail"))
+    }
+
+    @Test fun `resolveNameOverride clears when the typed name equals the system label`() {
+        // Re-typing the app's own label must NOT persist a redundant override, or clearing
+        // one back to the original would be impossible.
+        assertNull(LauncherLogic.resolveNameOverride("Gmail", "Gmail"))
+    }
+
+    @Test fun `resolveNameOverride stores a genuinely different name`() {
+        assertEquals("Mail", LauncherLogic.resolveNameOverride("Mail", "Gmail"))
+    }
+
+    /** The compare is case-sensitive on purpose: a lowercase "gmail" over a system "Gmail"
+     *  changes what the row shows, so it is a real override, not a redundant one. */
+    @Test fun `resolveNameOverride treats a case-only difference as a real override`() {
+        assertEquals("gmail", LauncherLogic.resolveNameOverride("gmail", "Gmail"))
+    }
+
+    /** ...and whitespace-sensitive too: the dialog hands over a trimmed name, so a trimmed
+     *  "Gmail" over a system that reports " Gmail " with spaces is the user asking for the
+     *  spaceless label — storing it is correct, not redundant. */
+    @Test fun `resolveNameOverride stores a trimmed name over a padded system label`() {
+        assertEquals("Gmail", LauncherLogic.resolveNameOverride("Gmail", " Gmail "))
+    }
+
     // ---- parseCommand -------------------------------------------------------
 
     @Test fun `every command and the bare tilde alias parse`() {

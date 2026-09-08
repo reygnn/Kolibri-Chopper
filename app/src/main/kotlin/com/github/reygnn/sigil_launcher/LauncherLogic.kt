@@ -338,6 +338,26 @@ internal object LauncherLogic {
     }
 
     /**
+     * What a rename dialog's typed [name] means for the stored name override of an app whose
+     * own label the system reports as [systemLabel]: the string to STORE, or null to CLEAR any
+     * override (so the row falls back to [systemLabel]). [name] is assumed already trimmed —
+     * RenameDialog trims it before this ever runs.
+     *
+     * An empty name, or one EQUAL to the system label, is not an override at all: storing it
+     * would persist a redundant entry that re-typing the original could then never clear. So
+     * both collapse to null, keeping `names` holding only genuine overrides.
+     *
+     * The comparison is deliberately EXACT — case- and whitespace-sensitive. A lowercase
+     * "gmail" over a system "Gmail", or a trimmed "Gmail" over a system that reports " Gmail "
+     * with spaces, changes what the row DISPLAYS, so it is a real override the user asked for,
+     * not a redundant one. Folding or trimming the system side here would silently throw those
+     * deliberate choices away. Lifted out of MainActivity so this decision — and those edges —
+     * are pinned by a JVM test instead of living inline behind the dialog's commit lambda.
+     */
+    fun resolveNameOverride(name: String, systemLabel: String): String? =
+        if (name.isEmpty() || name == systemLabel) null else name
+
+    /**
      * Every distinct tag ever defined, sorted — the suggestion pool for the tag
      * input's autocomplete. Includes tags whose apps are currently uninstalled, so a
      * known tag can still be reused. Values in [tags] are already folded (see

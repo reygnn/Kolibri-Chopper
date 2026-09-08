@@ -161,6 +161,14 @@ class ConfigJsonTest {
         assertNull(ConfigJson.parseForeign("""{"hidden":true,"names":"nope"}"""))
     }
 
+    /** Nor a section whose CONTAINER shape is swapped — the array sections as an object and the
+     *  object sections as an array. optJSONArray/optJSONObject each return null for the wrong
+     *  shape, so none of the four qualifies and the document is rejected, not adopted empty. */
+    @Test
+    fun `known keys of the wrong container shape do not qualify`() {
+        assertNull(ConfigJson.parseForeign("""{"favorites":{},"hidden":{},"names":[],"tags":[]}"""))
+    }
+
     @Test
     fun `a single known section is enough to accept`() {
         val onlyFavorites = ConfigJson.parseForeign("""{"favorites":["pkg/Act"]}""")

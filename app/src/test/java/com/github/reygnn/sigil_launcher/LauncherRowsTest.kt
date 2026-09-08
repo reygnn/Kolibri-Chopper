@@ -207,6 +207,14 @@ class LauncherRowsTest {
         assertEquals(listOf("com.b/B"), appKeys(rowsFor(Mode.HIDDEN_EDIT, "-brav")))
     }
 
+    @Test fun `a bare edit-mode sigil lists every app (empty needle)`() {
+        // "!" / "-" with nothing after the sigil is search(all, "") — the whole app list, so
+        // anything can be toggled. Only the narrowed case was exercised above; this pins that
+        // the empty-needle path reaches rowsFor unbroken (hidden apps included).
+        assertEquals(apps.map { it.key }, appKeys(rowsFor(Mode.FAV_EDIT, "!")))
+        assertEquals(apps.map { it.key }, appKeys(rowsFor(Mode.HIDDEN_EDIT, "-")))
+    }
+
     // ---- rowPrefix -----------------------------------------------------------
 
     @Test fun `rowPrefix picks the right marker per edit mode`() {

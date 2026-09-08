@@ -981,11 +981,12 @@ class MainActivity : Activity() {
             allTags = LauncherLogic.allTags(cfg.tags),
             fgColor = fgColor,
         ) { name, tags ->
-            // Empty OR identical to the app's own label = no override: drop any custom name
-            // instead of persisting a redundant one, so `names` only ever holds genuine
-            // overrides and re-typing the original clears it.
-            if (name.isEmpty() || name == entry.systemLabel) cfg.names.remove(key)
-            else cfg.names[key] = name
+            // Empty OR identical to the app's own label = no override. The decision (and its
+            // case/whitespace edges) is the pure LauncherLogic.resolveNameOverride, tested in
+            // LauncherLogicTest; null means "drop any custom name", so `names` only ever holds
+            // genuine overrides and re-typing the original clears it.
+            val override = LauncherLogic.resolveNameOverride(name, entry.systemLabel)
+            if (override == null) cfg.names.remove(key) else cfg.names[key] = override
             // Tags arrive already canonical from RenameDialog; drop the key entirely when
             // none remain so `tags` never holds an empty list (matching how names drops a
             // blank override).
