@@ -388,9 +388,7 @@ class MainActivity : Activity() {
                     is EnterAction.LaunchApp -> launch(action.entry)
                     // Drill a tag ("#tag"/"##tag"), open the drawer ("*") or clear back to
                     // NORMAL (""). setPrompt drives the TextWatcher exactly as typing does, so
-                    // the drawer/filter and the visible command line stay one source of truth —
-                    // and it parks the caret explicitly (before a trailing "*"), which is what
-                    // makes the "*"-then-type prefix filter actually work on-device.
+                    // the drawer/filter and the visible command line stay one source of truth.
                     is EnterAction.SetPrompt -> setPrompt(action.text)
                     EnterAction.None -> {}
                 }
@@ -1158,29 +1156,18 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Set the prompt programmatically AND place the caret deliberately, instead of trusting
-     * [android.widget.EditText.setText] to leave it where we need it. setText's post-set caret
-     * position is device/IME-dependent: some park it at the END, which turned the "*" drawer
-     * shortcut's next keystroke into "*a" (substring search, no match) rather than "a*" (the
-     * prefix filter) — the feature dead on those devices though every test passed. The caret
-     * target is the pure [LauncherLogic.caretFor] (JVM-pinned), so it can't drift with the
-     * widget. setText fires the TextWatcher synchronously, exactly as typing does.
+     * Set the prompt programmatically and leave the caret at the END, ready to keep typing —
+     * [android.widget.EditText.setText] on its own parks it at 0, which would make the next
+     * keystroke land in FRONT of a drilled "#tag".
+     *
+     * Nothing depends on the caret sitting anywhere in particular: the "*" drawer filter reads
+     * a star at either end (see [LauncherLogic.starPrefix]), precisely so it survives whatever
+     * the IME does with the caret when setText restarts the input connection. setText fires the
+     * TextWatcher synchronously, exactly as typing does.
      */
     private fun setPrompt(text: String) {
         prompt.setText(text)
-        // Set the caret inline for IMEs that respect it (no visible jump)...
-        prompt.setSelection(LauncherLogic.caretFor(text))
-        // ...and AGAIN after the current message/IME transaction. A programmatic setText on a
-        // focused field restarts the input connection, and on some IMEs that restart parks the
-        // caret at the END right after our inline setSelection — which turned the "*" drawer
-        // shortcut's next keystroke into "*a" (no match) instead of "a*". Posting re-asserts the
-        // caret once the restart has settled; recompute from the LIVE text so the target can't go
-        // stale if the field changed underneath. (This IME reset is not reproducible in
-        // Robolectric — its EditText parks the caret at 0 — so it can only be verified on-device.)
-        prompt.post {
-            val live = prompt.text?.toString().orEmpty()
-            prompt.setSelection(LauncherLogic.caretFor(live))
-        }
+        prompt.setSelection(text.length)
     }
 
     private fun showKeyboard() {

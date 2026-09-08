@@ -15,7 +15,12 @@ a launcher does not strictly need and see how small the APK gets.
   - `text` — substring search across **all** apps (hidden included)
   - `*` — the full drawer: everything except hidden apps, **but a favorite is
     always kept even when also hidden** (favoriting overrides hiding, so a starred
-    app is never trimmed from the default views)
+    app is never trimmed from the default views). **Enter** on an empty line is the
+    shortcut for it
+  - `*text` / `text*` — the drawer narrowed to apps whose name **starts with**
+    `text` (unlike the star-less search, which matches anywhere in the name). The
+    star counts on **either** side, so it does not matter whether you type it before
+    or after the prefix — whichever side the cursor happens to leave it on
   - `#` — lists the tags in use; tap one (or **Enter** on the nearest) to drill into
     that tag's apps
   - `#text` — tag filter: the apps under every tag starting with `text` (so `#gam`

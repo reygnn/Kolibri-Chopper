@@ -12,8 +12,8 @@ android {
         applicationId = "com.github.reygnn.sigil_launcher"
         minSdk = 36                 // Android 16 only — no compat shims
         targetSdk = 36
-        versionCode = 36
-        versionName = "0.2.26"
+        versionCode = 37
+        versionName = "0.2.27"
     }
 
     buildTypes {

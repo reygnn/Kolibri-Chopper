@@ -575,21 +575,35 @@ class LauncherLogicTest {
         assertEquals(emptyList<String>(), LauncherLogic.drawerStartingWith(emptyList<Row>(), emptySet(), emptySet(), "x").keys())
     }
 
-    // ---- caretFor ------------------------------------------------------------
+    // ---- starPrefix ----------------------------------------------------------
 
-    /** A trailing "*" parks the caret BEFORE the star, so typing grows "a*", "ab*", … and the
-     *  prefix filter fires. This is the exact behaviour a device that parks setText's caret at
-     *  the end broke — turning "a*" into "*a" and killing the feature. */
-    @Test fun `caretFor parks the caret before a trailing star`() {
-        assertEquals(0, LauncherLogic.caretFor("*"))
-        assertEquals(2, LauncherLogic.caretFor("ab*"))
+    /** The star reads the same at EITHER end — this is the whole point of the function, and
+     *  what makes the filter independent of where the IME leaves the caret. Typing "*" and
+     *  then a prefix yields "*ab"; the empty-Enter shortcut plus a prefix typed in front of
+     *  the star yields "ab*". Both mean "apps starting with ab". */
+    @Test fun `starPrefix reads the star at either end`() {
+        assertEquals("ab", LauncherLogic.starPrefix("ab*"))
+        assertEquals("ab", LauncherLogic.starPrefix("*ab"))
     }
 
-    /** Every non-star prompt gets the caret at the END, the natural spot for a filled field. */
-    @Test fun `caretFor puts the caret at the end for a non-star prompt`() {
-        assertEquals(0, LauncherLogic.caretFor(""))
-        assertEquals(5, LauncherLogic.caretFor("#work"))
-        assertEquals(6, LauncherLogic.caretFor("##work"))
+    /** A bare "*" is the EMPTY prefix, i.e. the whole drawer (see the drawerStartingWith
+     *  identity test above). "" is not null: the difference is drawer-vs-search. */
+    @Test fun `starPrefix maps a bare star to the empty prefix`() {
+        assertEquals("", LauncherLogic.starPrefix("*"))
+        assertEquals("", LauncherLogic.starPrefix("**"))
+    }
+
+    /** No star: null, so rowsFor falls through to the plain substring search over ALL apps
+     *  (the path that keeps a hidden app reachable by name). */
+    @Test fun `starPrefix returns null without a star`() {
+        assertNull(LauncherLogic.starPrefix(""))
+        assertNull(LauncherLogic.starPrefix("ab"))
+    }
+
+    /** A star INSIDE the text is not a wildcard — only the ends are. Such a prompt stays a
+     *  literal search, so an app whose label really contains "*" remains findable. */
+    @Test fun `starPrefix ignores a star in the middle`() {
+        assertNull(LauncherLogic.starPrefix("a*b"))
     }
 
     // ---- pushRecent ---------------------------------------------------------

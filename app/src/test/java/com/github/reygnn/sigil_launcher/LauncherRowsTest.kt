@@ -80,6 +80,15 @@ class LauncherRowsTest {
         assertEquals(listOf("com.c/C"), appKeys(rowsFor(Mode.NORMAL, "c*")))
     }
 
+    /** The star reads the same on the OTHER side, which is what makes the feature work for a
+     *  user who types the star and then the prefix — the caret sits after the star then, so
+     *  the prompt grows "*a", never "a*". Pinned here, not only on starPrefix, because the
+     *  equivalence is the user-visible promise. */
+    @Test fun `a prefix AFTER the star narrows the drawer the same way`() {
+        assertEquals(listOf("com.a/A"), appKeys(rowsFor(Mode.NORMAL, "*a")))
+        assertEquals(listOf("com.c/C"), appKeys(rowsFor(Mode.NORMAL, "*c")))
+    }
+
     @Test fun `the star prefix is case-insensitive`() {
         assertEquals(listOf("com.a/A"), appKeys(rowsFor(Mode.NORMAL, "A*")))
     }
@@ -121,8 +130,12 @@ class LauncherRowsTest {
         assertEquals(listOf("com.apple/A", "com.apricot/A", "com.applet/A"), appKeys(rows))
     }
 
-    @Test fun `a double star matches nothing since no label starts with a literal star`() {
-        assertTrue(appKeys(rowsFor(Mode.NORMAL, "**")).isEmpty())
+    /** Both stars are stripped, so "**" is the empty prefix — the whole drawer, exactly as a
+     *  bare "*". (It used to match nothing: with a trailing-only star, "**" asked for labels
+     *  starting with a literal "*". Reading both ends makes the drawer the sane answer for a
+     *  prompt that is nothing but wildcard.) */
+    @Test fun `a double star is the whole drawer, like a bare star`() {
+        assertEquals(appKeys(rowsFor(Mode.NORMAL, "*")), appKeys(rowsFor(Mode.NORMAL, "**")))
     }
 
     @Test fun `a star prefix over an empty app list is empty`() {

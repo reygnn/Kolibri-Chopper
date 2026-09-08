@@ -111,24 +111,6 @@ internal object LauncherLogic {
     }
 
     /**
-     * Where the text caret belongs after the Activity programmatically sets the prompt to
-     * [text] (the SetPrompt side of [enterAction]/[tapAction]).
-     *
-     * A trailing "*" is a wildcard the user types a prefix IN FRONT of ("a*" = apps starting
-     * with "a"), so the caret parks just before it — position length-1. Every other prompt
-     * ("#tag", "##tag", "") gets the caret at the END, the natural spot for a filled field.
-     *
-     * This exists because [android.widget.EditText.setText] does NOT reliably leave the caret
-     * where we need it: on some devices/IMEs it parks at the END, which turned the "*" drawer
-     * shortcut's next keystroke into "*a" (a substring search for "*a", matching nothing)
-     * instead of "a*" (the prefix filter) — the whole feature silently dead. Robolectric's
-     * EditText happens to park it at 0, so a widget test could not catch this; a caller that
-     * sets the caret from THIS value, rather than trusting setText, is the fix. Pure so it is
-     * pinned by a JVM test regardless of any setText quirk.
-     */
-    fun caretFor(text: String): Int = if (text.endsWith("*")) text.length - 1 else text.length
-
-    /**
      * Every "~" command with its canonical spelling. One list, so the overview rows,
      * the abbreviation resolver and the exact parser can never drift apart — adding a
      * command here is the whole change.
@@ -217,14 +199,32 @@ internal object LauncherLogic {
         all.filter { it.key !in hidden || it.key in favorites }
 
     /**
-     * The "*" drawer, optionally narrowed to labels that START WITH [prefix]. This is what
-     * a NORMAL prompt ending in "*" shows: a bare "*" (empty prefix) is the whole [drawer],
-     * and "<prefix>*" keeps only the drawer entries whose label begins with <prefix>.
+     * The prefix a star prompt filters the drawer by, or null if [trimmed] is not a star
+     * prompt at all (then it is an ordinary [search]).
      *
-     * The star is a TRAILING wildcard — the prefix is typed IN FRONT of it (the empty-Enter
-     * shortcut leaves the "*" at the end with the cursor before it), so "a*" reads as the glob
-     * "apps starting with a". [prefix] is ROOT-folded like every other match here, and a
-     * startsWith test is what makes this "Anfangsbuchstaben" rather than the substring [search].
+     * The star is a wildcard at EITHER end: "a*" and "*a" both mean "apps starting with a",
+     * and a bare "*" is the empty prefix — the whole drawer. Accepting both ends is what makes
+     * the feature independent of where the text caret happens to sit. The star prompt is
+     * reached two ways: the user types "*" themselves (the caret then lands AFTER it, so the
+     * prefix grows behind the star: "*a", "*ab", …), or the empty-Enter shortcut sets "*" for
+     * them. Pinning the caret to one side instead was tried twice and is not something an app
+     * can rely on — a programmatic setText restarts the input connection, and where the IME
+     * leaves the caret afterwards is its business, not ours.
+     */
+    fun starPrefix(trimmed: String): String? =
+        if (trimmed.startsWith("*") || trimmed.endsWith("*")) {
+            trimmed.removePrefix("*").removeSuffix("*")
+        } else {
+            null
+        }
+
+    /**
+     * The "*" drawer, optionally narrowed to labels that START WITH [prefix]. A bare "*"
+     * (empty prefix) is the whole [drawer]; with a prefix it keeps only the drawer entries
+     * whose label begins with it. Which spelling produced [prefix] is [starPrefix]'s problem.
+     *
+     * [prefix] is ROOT-folded like every other match here, and a startsWith test is what makes
+     * this "Anfangsbuchstaben" rather than the substring [search].
      *
      * Deliberately scoped to the drawer, NOT allApps: bare "*" already means "the drawer", so
      * narrowing it keeps hidden non-favorites out — reach a hidden app by name with a plain
@@ -485,20 +485,23 @@ internal object LauncherLogic {
             Mode.TAG_EDIT -> allApps
             // Handled above; named only to keep the when exhaustive.
             Mode.COMMAND -> emptyList()
-            Mode.NORMAL -> when {
-                // Empty prompt: favorites, or the drawer when none are set (or none of the
-                // set ones are currently launchable) so a fresh install is never blank.
-                trimmed.isEmpty() -> favoritesInDisplayOrder(allApps, favorites).ifEmpty {
-                    orderWithFavorites(drawer(allApps, hidden, favorites), favorites)
+            Mode.NORMAL -> {
+                // "*" is a wildcard at either end: a bare "*" is the whole drawer (everything
+                // except hidden, but a favorite is always kept), and a star beside a prefix
+                // narrows that drawer to labels STARTING WITH it. "a*" and "*a" are the same
+                // query, so the list follows along whether the caret sat before or after the
+                // star while the prefix was typed (see starPrefix).
+                val wildcard = starPrefix(trimmed)
+                when {
+                    // Empty prompt: favorites, or the drawer when none are set (or none of the
+                    // set ones are currently launchable) so a fresh install is never blank.
+                    trimmed.isEmpty() -> favoritesInDisplayOrder(allApps, favorites).ifEmpty {
+                        orderWithFavorites(drawer(allApps, hidden, favorites), favorites)
+                    }
+                    wildcard != null -> drawerStartingWith(allApps, hidden, favorites, wildcard)
+                    // Plain search spans ALL apps, so a hidden app stays reachable by name.
+                    else -> search(allApps, trimmed)
                 }
-                // "*" is a trailing wildcard: a bare "*" is the whole drawer (everything
-                // except hidden, but a favorite is always kept), and "<prefix>*" narrows
-                // that drawer to labels STARTING WITH <prefix>. The empty-Enter shortcut
-                // drops the user into a bare "*" with the cursor before it, so typing a
-                // letter grows "a*", "ab*", … and the list follows by prefix.
-                trimmed.endsWith("*") -> drawerStartingWith(allApps, hidden, favorites, trimmed.dropLast(1))
-                // Plain search spans ALL apps, so a hidden app stays reachable by name.
-                else -> search(allApps, trimmed)
             }
         }
         return apps.map { AppRow(it) }
