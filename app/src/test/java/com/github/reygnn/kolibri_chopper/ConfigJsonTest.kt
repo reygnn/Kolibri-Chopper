@@ -101,6 +101,19 @@ class ConfigJsonTest {
         assertTrue(parsed.names.isEmpty())
     }
 
+    @Test fun `non-string list elements and map values are dropped, not coerced`() {
+        // Android's org.json getString() would COERCE a number/boolean (123 -> "123") into a
+        // bogus component key or name, and would throw on a structural value (rejecting the
+        // whole file). opt(...) as? String drops any non-string uniformly, keeping the valid
+        // entries — lenient (per the class KDoc) and independent of the org.json impl.
+        val parsed = ConfigJson.parse(
+            """{"hidden":[123,"com.a/A"],"favorites":[true,"com.f/F"],"names":{"com.b/B":456,"com.c/C":"Real"}}""",
+        )!!
+        assertEquals(listOf("com.a/A"), parsed.hidden.toList())
+        assertEquals(listOf("com.f/F"), parsed.favorites.toList())
+        assertEquals(mapOf("com.c/C" to "Real"), parsed.names)
+    }
+
     @Test fun `round-trips names with quotes, backslashes and unicode`() {
         // A custom name must survive serialization intact — otherwise a stray quote
         // or backslash in a rename could corrupt the whole chopper.json.

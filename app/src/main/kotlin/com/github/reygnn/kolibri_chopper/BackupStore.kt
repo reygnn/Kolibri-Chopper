@@ -10,6 +10,7 @@ import android.provider.MediaStore
 import android.system.Os
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.InputStream
 
 /**
  * The shared-storage backup layer: publishing the config into Download/[subDir] and reading
@@ -153,11 +154,33 @@ internal class BackupStore(
     }
 
     /** Read a document's whole text, or null if it cannot be read. Shared by both restore
-     *  paths (the fixed-name one and the SAF picker's uri); never throws. */
+     *  paths (the fixed-name one and the SAF picker's uri); never throws. The bound itself
+     *  lives in [readCapped] so it is unit-testable without Android. */
     fun readText(uri: Uri): String? = try {
-        resolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
+        resolver.openInputStream(uri)?.use { readCapped(it) }
     } catch (e: Exception) {
         log("restore: cannot read $uri", e)
         null
+    }
+
+    companion object {
+        /** Cap for a restore read. A chopper.json is small text (keys, names, tags); anything
+         *  larger is not a real config, so refuse it rather than risk an OOM on a hostile or
+         *  huge file — the write path is bounded by our own config, only reads are exposed. */
+        private const val MAX_RESTORE_BYTES = 8 * 1024 * 1024 // 8 MiB
+
+        /**
+         * Read at most [maxBytes] from [input] as UTF-8, or null when it holds more. Extracted
+         * from [readText] so the bound — the load-bearing part against an OOM on a huge or
+         * streaming/pipe restore file — is a pure function of an InputStream, unit-testable on
+         * the JVM without Android (the Uri -> stream step in [readText] is trivial glue).
+         * Reads one byte past the cap so an over-limit file is detected, not silently truncated.
+         * ([maxBytes] is a parameter only so a test can drive the boundary with a tiny cap;
+         * production always uses [MAX_RESTORE_BYTES]. readNBytes is API 33+; minSdk 36.)
+         */
+        internal fun readCapped(input: InputStream, maxBytes: Int = MAX_RESTORE_BYTES): String? {
+            val bytes = input.readNBytes(maxBytes + 1)
+            return if (bytes.size > maxBytes) null else bytes.toString(Charsets.UTF_8)
+        }
     }
 }

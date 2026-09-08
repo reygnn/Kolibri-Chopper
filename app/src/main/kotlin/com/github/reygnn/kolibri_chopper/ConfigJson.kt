@@ -76,14 +76,19 @@ internal object ConfigJson {
      *  document is worth reading. May throw; both callers translate that to null. */
     private fun parseObject(j: JSONObject): ChopperConfig {
         val loaded = ChopperConfig()
+        // Keep only String elements/values. Android's org.json getString() COERCES a
+        // non-string scalar (123 -> "123") into a bogus key/name and throws on a
+        // structural value; opt(...) as? String drops any non-string uniformly, which is
+        // both impl-independent and lenient by design (see the class KDoc: ignore, don't
+        // reject — the rest of the file still loads).
         j.optJSONArray("hidden")?.let {
-            for (i in 0 until it.length()) loaded.hidden += it.getString(i)
+            for (i in 0 until it.length()) (it.opt(i) as? String)?.let { s -> loaded.hidden += s }
         }
         j.optJSONArray("favorites")?.let {
-            for (i in 0 until it.length()) loaded.favorites += it.getString(i)
+            for (i in 0 until it.length()) (it.opt(i) as? String)?.let { s -> loaded.favorites += s }
         }
         j.optJSONObject("names")?.let { o ->
-            for (k in o.keys()) loaded.names[k] = o.getString(k)
+            for (k in o.keys()) (o.opt(k) as? String)?.let { s -> loaded.names[k] = s }
         }
         j.optJSONObject("tags")?.let { o ->
             for (k in o.keys()) {
@@ -99,7 +104,8 @@ internal object ConfigJson {
                 // canonicalise to the same thing must collapse, or toggleTag's minus
                 // (first occurrence only) could never fully un-tick the app.
                 for (i in 0 until arr.length()) {
-                    val tag = LauncherLogic.canonicalTag(arr.getString(i))
+                    val raw = arr.opt(i) as? String ?: continue
+                    val tag = LauncherLogic.canonicalTag(raw)
                     if (tag.isNotEmpty() && tag !in list) list += tag
                 }
                 // Drop an empty list rather than materializing a tagless key — keeps the

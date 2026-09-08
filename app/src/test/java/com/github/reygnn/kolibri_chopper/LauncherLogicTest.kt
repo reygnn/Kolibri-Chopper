@@ -357,6 +357,12 @@ class LauncherLogicTest {
         assertEquals(listOf("c", "a", "b"), LauncherLogic.reorder(listOf("a", "b", "c"), "c", "a"))
     }
 
+    @Test fun `reorder moves a row onto the very last slot`() {
+        // The first-slot boundary is covered above; the last-slot boundary — a down-move
+        // inserting AFTER the final element (dest + 1 at the end) — was not.
+        assertEquals(listOf("b", "c", "d", "a"), LauncherLogic.reorder(listOf("a", "b", "c", "d"), "a", "d"))
+    }
+
     @Test fun `reorder returns null for a no-op or impossible move`() {
         assertNull(LauncherLogic.reorder(listOf("a", "b"), "a", "a"))   // same row
         assertNull(LauncherLogic.reorder(listOf("a", "b"), "x", "a"))   // picked absent

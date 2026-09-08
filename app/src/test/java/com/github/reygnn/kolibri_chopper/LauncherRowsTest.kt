@@ -56,6 +56,18 @@ class LauncherRowsTest {
         assertEquals(listOf("com.a/A", "com.c/C"), appKeys(rows))
     }
 
+    @Test fun `empty prompt falls back to the drawer when the set favorites are all uninstalled`() {
+        // Favorites ARE configured, but none is currently launchable, so
+        // favoritesInDisplayOrder is empty and the .ifEmpty branch still shows the drawer —
+        // distinct from the "no favorites set" case above. This also exercises
+        // orderWithFavorites with a non-empty favorites set none of whose keys are present.
+        val ghostFavorites = linkedSetOf("com.x/X", "com.y/Y") // none present in `apps`
+        val rows = LauncherLogic.rowsFor(
+            Mode.NORMAL, "", apps, hidden, ghostFavorites, tags, recents, null,
+        )
+        assertEquals(listOf("com.a/A", "com.c/C"), appKeys(rows))
+    }
+
     @Test fun `star shows the drawer keeping favorites and dropping hidden non-favorites`() {
         // B is hidden and not a favorite -> gone. Favorites sink to the bottom in rank order.
         assertEquals(listOf("com.c/C", "com.a/A"), appKeys(rowsFor(Mode.NORMAL, "*")))
@@ -94,6 +106,18 @@ class LauncherRowsTest {
 
     @Test fun `hash with text prefix-matches tags and returns their apps`() {
         assertEquals(listOf("com.a/A"), appKeys(rowsFor(Mode.TAG_FILTER, "#gam")))
+    }
+
+    @Test fun `tag filter surfaces a hidden app - tagging overrides hiding`() {
+        // B is hidden (shared fixture) AND tagged here. TAG_FILTER runs over allApps, not
+        // the drawer, so a tag is an explicit choice that overrides hiding — the same
+        // contract as favoriting. The fixture's hidden app carries no tag, so this branch
+        // was never exercised.
+        val tagsWithHiddenApp = mapOf("com.b/B" to listOf("work"))
+        val rows = LauncherLogic.rowsFor(
+            Mode.TAG_FILTER, "#work", apps, hidden, favorites, tagsWithHiddenApp, recents, null,
+        )
+        assertEquals(listOf("com.b/B"), appKeys(rows))
     }
 
     // ---- TAG_EDIT ("##") -----------------------------------------------------
