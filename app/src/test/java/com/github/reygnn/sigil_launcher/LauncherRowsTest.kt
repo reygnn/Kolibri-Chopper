@@ -151,6 +151,12 @@ class LauncherRowsTest {
         assertEquals(Command.BACKUP, (rows.single() as CommandRow).command)
     }
 
+    @Test fun `a non-matching tilde prefix yields an empty command overview`() {
+        // commandsMatching("~zzz") being empty is pinned in LauncherLogicTest; this pins the
+        // rowsFor COMMAND branch over it — a bare .map, so an empty in stays an empty out.
+        assertTrue(rowsFor(Mode.COMMAND, "~zzz").isEmpty())
+    }
+
     // ---- TAG_FILTER ("#") ----------------------------------------------------
 
     @Test fun `bare hash lists the in-use tags sorted, as TagRows`() {
