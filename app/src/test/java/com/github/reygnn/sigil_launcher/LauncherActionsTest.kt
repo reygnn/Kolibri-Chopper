@@ -156,4 +156,33 @@ class LauncherActionsTest {
     @Test fun `an app row in COMMAND mode resolves to nothing`() {
         assertEquals(TapAction.None, LauncherLogic.tapAction(Mode.COMMAND, app("com.a/A")))
     }
+
+    // ---- sigil-named tags drill to a tag filter, not that sigil's mode --------
+
+    /**
+     * A tag may legitimately start with "!"/"-"/"~"/"?" — canonicalTag keeps them; only "#" is
+     * stripped. Drilling such a tag prepends "#", landing the sigil at position 1 where
+     * parseMode ignores it, so the drill stays a TAG_FILTER. This pins the prompt the two
+     * actions hand back for those names AND that it round-trips through parseMode — the
+     * reachability canonicalTag keeps the characters for. (rowsFor's half — that the resulting
+     * "#!work" actually lists the app — is pinned in LauncherRowsTest.)
+     */
+    @Test fun `drilling a sigil-named tag builds a prompt that is still a tag filter`() {
+        for (name in listOf("!work", "-work", "~work", "?work", "!!fun")) {
+            assertEquals(TapAction.SetPrompt("#$name"), LauncherLogic.tapAction(Mode.TAG_FILTER, TagRow(name)))
+            // The Enter path (that tag row is nearest the prompt) drills identically.
+            assertEquals(
+                EnterAction.SetPrompt("#$name"),
+                LauncherLogic.enterAction(Mode.TAG_FILTER, command = null, promptBlank = false, lastRow = TagRow(name)),
+            )
+            assertEquals("\"#$name\" is no longer a tag filter", Mode.TAG_FILTER, LauncherLogic.parseMode("#$name"))
+        }
+    }
+
+    /** The bulk-edit mirror: "##!work" edits the tag "!work", and its doubled hash keeps it in
+     *  TAG_EDIT — a "#"-stripped tag can never collide with the "##" sigil the other way. */
+    @Test fun `bulk-editing a sigil-named tag builds a double-hash prompt that stays TAG_EDIT`() {
+        assertEquals(TapAction.SetPrompt("##!work"), LauncherLogic.tapAction(Mode.TAG_EDIT, TagRow("!work")))
+        assertEquals(Mode.TAG_EDIT, LauncherLogic.parseMode("##!work"))
+    }
 }

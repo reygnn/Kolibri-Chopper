@@ -1084,14 +1084,10 @@ class MainActivity : Activity() {
         // longer in FAV_REORDER, so nothing stale survives into another mode.
         if (mode != Mode.FAV_REORDER) reorderPick = null
         // Whatever follows "##" IS the tag; blank means the overview is showing and no tag
-        // is chosen yet. Canonicalised here once — the SAME rule the dialog and the file
-        // loader apply — so "##Work", "##work" and "##  work" are one tag, and nothing
-        // downstream has to remember to normalise.
-        tagEditTag = if (mode == Mode.TAG_EDIT) {
-            LauncherLogic.canonicalTag(q.substring(2)).takeIf { it.isNotEmpty() }
-        } else {
-            null
-        }
+        // is chosen yet. The overview-vs-chosen-tag decision (and the canonicalisation that
+        // makes "##Work"/"##work"/"##  work" one tag) is the pure LauncherLogic.tagEditTagFor,
+        // tested in LauncherRowsTest — so nothing downstream has to remember to normalise.
+        tagEditTag = LauncherLogic.tagEditTagFor(mode, q)
         // The entire "given the prompt, what rows does the list show?" decision now lives
         // as one pure, exhaustively-tested function in LauncherLogic (see rowsFor and
         // LauncherRowsTest). The Activity keeps only the SIDE EFFECTS around it: the

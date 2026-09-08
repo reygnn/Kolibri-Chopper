@@ -1,6 +1,7 @@
 package com.github.reygnn.sigil_launcher
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -178,6 +179,35 @@ class LauncherRowsTest {
         assertEquals(listOf("com.b/B"), appKeys(rows))
     }
 
+    /**
+     * The reachability the canonicalTag design exists for, pinned end-to-end. canonicalTag
+     * KEEPS a leading "!"/"-"/"~"/"?" on a tag (only "#" is stripped, because "#"+name would
+     * flip the "##" sigil). Keeping them is only safe because DRILLING a tag prepends "#",
+     * landing the sigil at position 1 where parseMode ignores it — so "#!work" is still a tag
+     * filter, not FAV_EDIT. Nothing pinned that whole chain: a parseMode-ordering change, or
+     * dropping the sigil from canonicalTag, would pass every other test yet make these tags
+     * unreachable from the very "#" overview that offers them. (The tapAction/enterAction half
+     * that BUILDS "#!work" from the tag row is pinned in LauncherActionsTest.)
+     */
+    @Test fun `a sigil-named tag is listed, stays a tag filter when drilled, and finds its app`() {
+        for (name in listOf("!work", "-work", "~work", "?work", "!!work")) {
+            val sigilTags = mapOf("com.a/A" to listOf(name))
+            // 1. the bare "#" overview lists it (it is a tag borne by an installed app)...
+            val overview = LauncherLogic.rowsFor(
+                Mode.TAG_FILTER, "#", apps, hidden, favorites, sigilTags, recents, null,
+            )
+            assertEquals("\"$name\" missing from the # overview", listOf(name), tagNames(overview))
+            // 2. ...drilling it prepends "#", which MUST stay a tag filter, not the sigil's mode.
+            val drilled = "#$name"
+            assertEquals("\"$drilled\" is no longer a tag filter", Mode.TAG_FILTER, LauncherLogic.parseMode(drilled))
+            // 3. ...and that filter actually returns the app carrying the tag.
+            val filtered = LauncherLogic.rowsFor(
+                Mode.TAG_FILTER, drilled, apps, hidden, favorites, sigilTags, recents, null,
+            )
+            assertEquals("\"$drilled\" did not find its app", listOf("com.a/A"), appKeys(filtered))
+        }
+    }
+
     // ---- TAG_EDIT ("##") -----------------------------------------------------
 
     @Test fun `bare double-hash lists ALL tags including ghosts, as TagRows`() {
@@ -189,6 +219,40 @@ class LauncherRowsTest {
     @Test fun `double-hash with a chosen tag lists every app unreordered`() {
         val rows = rowsFor(Mode.TAG_EDIT, "##work", tagEditTag = "work")
         assertEquals(apps.map { it.key }, appKeys(rows))
+    }
+
+    // ---- tagEditTagFor -------------------------------------------------------
+    //
+    // The overview-vs-chosen-tag decision, pulled out of applyFilter so the raw-prompt ->
+    // tag derivation is one tested mapping. It feeds rowsFor's tagEditTag parameter (above),
+    // so a regression here — a substring(1) slip, a lost fold, a phantom empty tag — would
+    // silently flip the bare-"##" overview into an all-apps edit list for tag "".
+
+    @Test fun `tagEditTagFor is null outside TAG_EDIT`() {
+        for (m in Mode.entries.filter { it != Mode.TAG_EDIT }) {
+            assertNull("expected null for $m", LauncherLogic.tagEditTagFor(m, "##work"))
+        }
+    }
+
+    @Test fun `tagEditTagFor returns the canonical tail of a chosen tag`() {
+        assertEquals("work", LauncherLogic.tagEditTagFor(Mode.TAG_EDIT, "##work"))
+        assertEquals("work", LauncherLogic.tagEditTagFor(Mode.TAG_EDIT, "##Work"))    // folded
+        assertEquals("work", LauncherLogic.tagEditTagFor(Mode.TAG_EDIT, "##  work"))  // trimmed
+    }
+
+    @Test fun `tagEditTagFor keeps the overview up for a tail that canonicalises to nothing`() {
+        // A user CAN type each of these; none names a tag, so the overview stays up (null)
+        // rather than the app selecting a phantom empty tag. "###"/"##," canonicalise away
+        // exactly as canonicalTag pins.
+        assertNull(LauncherLogic.tagEditTagFor(Mode.TAG_EDIT, "##"))
+        assertNull(LauncherLogic.tagEditTagFor(Mode.TAG_EDIT, "###"))
+        assertNull(LauncherLogic.tagEditTagFor(Mode.TAG_EDIT, "##,"))
+    }
+
+    @Test fun `tagEditTagFor keeps a sigil-named tag (the bulk-edit mirror of drilling it)`() {
+        // "##!work" edits the tag "!work" in bulk — the mirror of drilling "#!work" to filter
+        // it (see the reachability test below). canonicalTag keeps the leading "!".
+        assertEquals("!work", LauncherLogic.tagEditTagFor(Mode.TAG_EDIT, "##!work"))
     }
 
     // ---- RECENTS / FAV_REORDER / edit modes ----------------------------------

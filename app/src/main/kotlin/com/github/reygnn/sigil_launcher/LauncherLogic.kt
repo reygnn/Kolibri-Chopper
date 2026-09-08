@@ -395,6 +395,25 @@ internal object LauncherLogic {
     }
 
     /**
+     * The canonical tag behind a "##" prompt, or null when the bare-"##" overview is showing
+     * and no tag is chosen yet. Lifted out of MainActivity.applyFilter for the same reason the
+     * rest of this file is: it is the SINGLE place that decides "overview vs. a chosen tag" from
+     * the raw prompt, and that decision drives [rowsFor]'s bare-"##" branch, the "##tag" edit
+     * list and the adapter's [x]/[ ] membership glyph — so it must be one tested mapping, not
+     * inlined behind the TextWatcher.
+     *
+     * Only meaningful in [Mode.TAG_EDIT]; every other mode yields null. [trimmed] is the
+     * already-trimmed prompt, and TAG_EDIT guarantees it starts with "##", so substring(2) is
+     * safe. What follows is run through [canonicalTag] — the SAME rule the long-press dialog and
+     * the file loader apply — so "##Work", "##work" and "##  work" are one tag. A prompt whose
+     * tail canonicalises to nothing ("##", "###", "##,") yields null: there is no tag yet, so the
+     * overview stays up rather than the app selecting a phantom empty tag.
+     */
+    fun tagEditTagFor(mode: Mode, trimmed: String): String? =
+        if (mode == Mode.TAG_EDIT) canonicalTag(trimmed.substring(2)).takeIf { it.isNotEmpty() }
+        else null
+
+    /**
      * The whole "given the prompt, what rows does the list show?" decision, lifted out of
      * MainActivity.applyFilter so it is a single pure, exhaustively-testable mapping. The
      * Activity keeps only the SIDE EFFECTS around it — bumping shownGeneration, resetting
