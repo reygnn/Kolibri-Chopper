@@ -11,6 +11,10 @@ kotlin = "2.3.21"
 # Test-only.
 junit  = "4.13.2"
 json   = "20260814"
+# Test-only — Robolectric runs the framework-bound bits (RenameDialog's InputFilter,
+# EditText widgets) on the JVM. 4.16.1 is the version that ships an SDK 36 android-all
+# jar and supports JDK 21 — earlier lines top out below API 36. OK to upgrade.
+robolectric = "4.16.1"
 
 [libraries]
 # Test-only — JVM unit tests for the pure logic in LauncherLogic.kt.
@@ -18,6 +22,10 @@ junit = { group = "junit", name = "junit", version.ref = "junit" }
 # Test-only — the REAL org.json impl on the unit-test classpath, so the
 # ConfigJson round-trip runs on the JVM (android.jar ships only a throwing stub).
 json = { group = "org.json", name = "json", version.ref = "json" }
+# Test-only — an Android runtime on the JVM for the handful of tests that need real
+# widgets (an EditText applying its InputFilter, an AlertDialog). Everything else stays
+# plain JUnit4; Robolectric is opt-in per test via @RunWith(RobolectricTestRunner).
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

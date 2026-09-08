@@ -55,6 +55,24 @@ android {
         }
     }
 
+    testOptions {
+        unitTests {
+            // Robolectric reads the merged manifest and resources — a test that builds a
+            // real widget resolves R.string/@style through them.
+            isIncludeAndroidResources = true
+            // The plain (non-Robolectric) JVM tests never call android.jar, but keep the
+            // stub returning defaults rather than throwing, so a future one that grazes a
+            // framework getter degrades instead of failing on the android.jar stub.
+            isReturnDefaultValues = true
+            all {
+                // Robolectric self-attaches a ByteBuddy agent; on JDK 21 that prints a
+                // warning (and is an error on later JDKs) unless dynamic agent loading is
+                // opted into explicitly.
+                it.jvmArgs("-XX:+EnableDynamicAgentLoading")
+            }
+        }
+    }
+
     // Every buildFeature stays OFF (BuildConfig, Compose, viewBinding, …).
     // Sigil Launcher has no generated code and no resource-backed binding.
 }
@@ -67,4 +85,9 @@ dependencies {
     // Real org.json on the unit-test classpath for the ConfigJson round-trip
     // (the android.jar org.json is a throwing stub). Test-only — not in the APK.
     testImplementation(libs.json)
+    // Android runtime on the JVM for the few tests that need real widgets (RenameDialog's
+    // tag InputFilter). Test-only — never in the shipped APK. No androidx.test/ActivityScenario
+    // here on purpose: a plain Activity with no Hilt/AppCompat is driven with Robolectric's
+    // own APIs, which keeps the whole androidx.test consistent-resolution force-pin out.
+    testImplementation(libs.robolectric)
 }
