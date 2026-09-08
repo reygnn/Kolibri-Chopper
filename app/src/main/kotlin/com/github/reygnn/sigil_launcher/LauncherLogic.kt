@@ -49,6 +49,46 @@ internal data class AppRow<out T : Ordered>(val entry: T) : Row<T>
 internal data class TagRow(val name: String) : Row<Nothing>
 internal data class CommandRow(val name: String, val command: Command) : Row<Nothing>
 
+/**
+ * What an Enter on the command line should DO, decided purely from the prompt state. Lifted
+ * out of MainActivity's setOnEditorActionListener so the branch order — which is load-bearing,
+ * not cosmetic — is one testable mapping instead of an inlined `when`. The Activity performs
+ * the side effects ([EnterAction.Run] clears the prompt first, [EnterAction.SetPrompt] drives
+ * the TextWatcher, [EnterAction.LaunchApp] starts the app); this only decides which.
+ */
+internal sealed interface EnterAction<out T : Ordered> {
+    /** Run a one-shot "~" command; the Activity clears the prompt before running it. */
+    data class Run(val command: Command) : EnterAction<Nothing>
+    /** Launch the app nearest the command line (an [AppRow] under a read mode). */
+    data class LaunchApp<out T : Ordered>(val entry: T) : EnterAction<T>
+    /** Rewrite the prompt — drill into a tag ("#tag"/"##tag"), open the drawer ("*"), or
+     *  clear back to NORMAL (""). Drives the TextWatcher exactly as typing would. */
+    data class SetPrompt(val text: String) : EnterAction<Nothing>
+    /** Do nothing at all — an ambiguous "~" abbreviation, or an empty list to act on. */
+    data object None : EnterAction<Nothing>
+}
+
+/**
+ * What a TAP on a list row should DO, decided purely from the mode and the tapped row. Lifted
+ * out of MainActivity's setOnItemClickListener for the same reason [EnterAction] is: the
+ * per-mode dispatch is real branching logic that belongs in a tested pure function, not inlined
+ * behind a click listener. The Activity maps each action to its side effect (toggle a set,
+ * pick up a reorder, launch, rewrite the prompt); this only decides which.
+ */
+internal sealed interface TapAction<out T : Ordered> {
+    data class Launch<out T : Ordered>(val entry: T) : TapAction<T>
+    data class ToggleHidden<out T : Ordered>(val entry: T) : TapAction<T>
+    data class ToggleFavorite<out T : Ordered>(val entry: T) : TapAction<T>
+    data class ReorderPick<out T : Ordered>(val entry: T) : TapAction<T>
+    data class ToggleTag<out T : Ordered>(val entry: T) : TapAction<T>
+    /** Run the command a [CommandRow] carries; the Activity clears the prompt first. */
+    data class Run(val command: Command) : TapAction<Nothing>
+    /** Drill a tag row into its filter ("#tag" for the "#" overview, "##tag" for "##"). */
+    data class SetPrompt(val text: String) : TapAction<Nothing>
+    /** A stale position (the list shrank under the tap), or a row a mode ignores. */
+    data object None : TapAction<Nothing>
+}
+
 internal object LauncherLogic {
 
     /**
@@ -425,5 +465,67 @@ internal object LauncherLogic {
         Mode.FAV_REORDER -> if (isPicked) "\u00BB " else "  "
         Mode.TAG_EDIT -> if (isTagged) "[x] " else "[ ] "
         Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER, Mode.COMMAND -> ""
+    }
+
+    /**
+     * What Enter on the command line does, given the resolved [command], the [mode], whether
+     * the raw prompt [promptBlank] is empty, and the [lastRow] (the row nearest the prompt
+     * under isStackFromBottom — the natural Enter target). The branch ORDER is load-bearing:
+     *
+     *  1. A resolved [command] wins over everything, including a COMMAND-mode overview still
+     *     being typed ("~b" both matches and is in COMMAND mode) — an exact/unambiguous
+     *     command must fire rather than no-op.
+     *  2. COMMAND mode with no resolved command ("~r", still ambiguous) does NOTHING: the
+     *     overview already shows what's in the running, so clearing would throw away the typing.
+     *  3. TAG_EDIT is two views behind one sigil, so it never launches: with the overview up
+     *     Enter drills into the nearest tag, otherwise it's a plain "done" (clear).
+     *  4. An empty prompt opens the drawer via "*" — this MUST sit before the launch branch, or
+     *     a "leeres Enter" would launch the top favorite instead of showing everything.
+     *  5. The read modes act on [lastRow]: launch an app, or drill a bare-"#" tag row.
+     *  6. Anything else (a non-empty edit-mode prompt) is a "done" gesture: clear to NORMAL.
+     */
+    fun <T : Ordered> enterAction(
+        mode: Mode,
+        command: Command?,
+        promptBlank: Boolean,
+        lastRow: Row<T>?,
+    ): EnterAction<T> = when {
+        command != null -> EnterAction.Run(command)
+        mode == Mode.COMMAND -> EnterAction.None
+        mode == Mode.TAG_EDIT -> when (lastRow) {
+            is TagRow -> EnterAction.SetPrompt("##${lastRow.name}")
+            else -> EnterAction.SetPrompt("")
+        }
+        promptBlank -> EnterAction.SetPrompt("*")
+        mode == Mode.NORMAL || mode == Mode.RECENTS || mode == Mode.TAG_FILTER -> when (lastRow) {
+            is AppRow -> EnterAction.LaunchApp(lastRow.entry)
+            is TagRow -> EnterAction.SetPrompt("#${lastRow.name}")
+            // A CommandRow only exists in COMMAND mode (handled above) and null means an
+            // empty list — neither is an Enter target here.
+            else -> EnterAction.None
+        }
+        else -> EnterAction.SetPrompt("")
+    }
+
+    /**
+     * What a tap on [row] does in the given [mode]. A [TagRow] drills into its filter (which
+     * sigil is decided by the mode it was rendered in), a [CommandRow] runs its command, and an
+     * [AppRow] fans out per mode — launch under the read modes, toggle/pick under the edit
+     * modes. A null [row] is a stale position (the list shrank under the tap) and does nothing.
+     */
+    fun <T : Ordered> tapAction(mode: Mode, row: Row<T>?): TapAction<T> = when (row) {
+        null -> TapAction.None
+        is TagRow -> TapAction.SetPrompt(if (mode == Mode.TAG_EDIT) "##${row.name}" else "#${row.name}")
+        is CommandRow -> TapAction.Run(row.command)
+        is AppRow -> when (mode) {
+            Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER -> TapAction.Launch(row.entry)
+            Mode.HIDDEN_EDIT -> TapAction.ToggleHidden(row.entry)
+            Mode.FAV_EDIT -> TapAction.ToggleFavorite(row.entry)
+            Mode.FAV_REORDER -> TapAction.ReorderPick(row.entry)
+            Mode.TAG_EDIT -> TapAction.ToggleTag(row.entry)
+            // A CommandRow never reaches here (handled above); an AppRow can't be rendered in
+            // COMMAND mode, so this only keeps the when exhaustive.
+            Mode.COMMAND -> TapAction.None
+        }
     }
 }

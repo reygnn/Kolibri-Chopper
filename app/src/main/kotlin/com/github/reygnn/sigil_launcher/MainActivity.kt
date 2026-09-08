@@ -265,36 +265,26 @@ class MainActivity : Activity() {
             }
             setOnItemClickListener { _, _, position, _ ->
                 if (!clickStillValid()) return@setOnItemClickListener
-                // getOrNull, not [position]: a background load can complete on the
-                // main thread between the frame the user tapped and this click
-                // message running, shrinking shown — a stale position would then
-                // throw. A HOME app must never crash, so drop the tap instead.
-                when (val row = shown.getOrNull(position)) {
-                    // A tag row (bare "#") drills into that tag's apps by rewriting the
-                    // prompt — the TextWatcher then re-filters through applyFilter.
-                    // The same row type serves both overviews; which sigil it drills
-                    // into is decided by the mode it was rendered in.
-                    is TagRow ->
-                        prompt.setText(if (mode == Mode.TAG_EDIT) "##${row.name}" else "#${row.name}")
+                // getOrNull, not [position]: a background load can complete on the main
+                // thread between the frame the user tapped and this click message running,
+                // shrinking shown — a stale position would then throw (tapAction maps null
+                // to None). The per-mode dispatch is the pure LauncherLogic.tapAction (see
+                // LauncherActionsTest); the Activity keeps only the side effects.
+                when (val action = LauncherLogic.tapAction(mode, shown.getOrNull(position))) {
+                    is TapAction.Launch -> launch(action.entry)
+                    is TapAction.ToggleHidden -> toggle(cfg.hidden, action.entry.key)
+                    is TapAction.ToggleFavorite -> toggle(cfg.favorites, action.entry.key)
+                    is TapAction.ReorderPick -> reorderTap(action.entry.key)
+                    is TapAction.ToggleTag -> toggleTagOn(action.entry.key)
                     // Clear FIRST, exactly as the Enter path does: setText fires the
-                    // TextWatcher synchronously, so the mode is back to NORMAL before
-                    // the command runs and the re-render can't land on a stale overview.
-                    is CommandRow -> {
-                        prompt.setText("")
-                        runCommand(row.command)
-                    }
-                    is AppRow -> when (mode) {
-                        Mode.NORMAL, Mode.RECENTS, Mode.TAG_FILTER -> launch(row.entry)
-                        Mode.HIDDEN_EDIT -> toggle(cfg.hidden, row.entry.key)
-                        Mode.FAV_EDIT    -> toggle(cfg.favorites, row.entry.key)
-                        Mode.FAV_REORDER -> reorderTap(row.entry.key)
-                        Mode.TAG_EDIT -> toggleTagOn(row.entry.key)
-                        // The "~" overview holds CommandRows, never AppRows — its taps
-                        // are handled by the CommandRow branch above. Named only to keep
-                        // this when exhaustive.
-                        Mode.COMMAND -> {}
-                    }
-                    null -> {}  // stale position
+                    // TextWatcher synchronously, so the mode is back to NORMAL before the
+                    // command runs and the re-render can't land on a stale overview.
+                    is TapAction.Run -> { prompt.setText(""); runCommand(action.command) }
+                    // A tag row drills into that tag's apps by rewriting the prompt — the
+                    // TextWatcher then re-filters. The same row type serves both overviews;
+                    // which sigil it drills into is decided by the mode it was rendered in.
+                    is TapAction.SetPrompt -> prompt.setText(action.text)
+                    TapAction.None -> {}  // stale position, or a row this mode ignores
                 }
             }
             // Long-press: set/clear a custom name (and tags) for an app. Tag rows have
@@ -374,61 +364,29 @@ class MainActivity : Activity() {
                 val command = LauncherLogic.resolveCommand(
                     prompt.text?.toString()?.trim().orEmpty()
                 )
-                when {
-                    // Clear the prompt BEFORE running it ("" parses to no command),
-                    // so a second Enter can't fire the same command again.
-                    command != null -> {
-                        prompt.setText("")
-                        runCommand(command)
-                    }
-                    // An abbreviation that still fits more than one command ("~r"):
-                    // do nothing at all. Clearing would throw away what was typed, and
-                    // the overview is right there showing what is still in the running —
-                    // one more keystroke settles it.
-                    mode == Mode.COMMAND -> {}
-                    // "##" is two views behind one sigil, so it cannot join the read
-                    // modes below: with the overview up Enter drills into the nearest tag,
-                    // with the checkbox list up it is a plain "done". It must never reach
-                    // the launch branch — Enter in an edit mode has never launched.
-                    mode == Mode.TAG_EDIT -> when (val last = shown.lastOrNull()) {
-                        is TagRow -> prompt.setText("##${last.name}")
-                        else -> prompt.setText("")
-                    }
-                    // A "leeres Enter" — Enter on an empty prompt — opens the full drawer
-                    // via "*" instead of launching the favorite nearest the command line.
-                    // An empty prompt is always NORMAL (every other mode needs a sigil) and
-                    // shows favorites, so its previous Enter target was the top favorite;
-                    // routing it to "*" makes Enter-from-rest mean "show everything" rather
-                    // than "launch this one". setText drives the TextWatcher exactly as
-                    // typing "*" does, so the drawer and the visible command line stay one
-                    // source of truth. It sits before the launch branch so it wins for the
-                    // empty prompt; the command branch above already no-ops on "".
-                    //
-                    // The star is a trailing wildcard: setText parks the cursor at index 0
-                    // (before the "*"), so a letter typed next grows "a*", "ab*", … and the
-                    // drawer narrows by prefix (see LauncherLogic.drawerStartingWith).
-                    prompt.text.isNullOrBlank() -> prompt.setText("*")
-                    // In an edit mode Enter is a "done" gesture: clear the prompt
-                    // back to normal instead of launching whatever sits at the top.
-                    // lastOrNull, not firstOrNull: with isStackFromBottom the list
-                    // fills upward from the command line, so the LAST row is the one
-                    // sitting directly above the prompt — the natural Enter target.
-                    // (Swap to firstOrNull if you'd rather Enter pick the
-                    // alphabetically-first match instead.)
-                    // The read modes act on the row nearest the command line: launch it
-                    // if it's an app, or — in the bare-"#" tag overview — drill into the
-                    // nearest tag. (An empty NORMAL prompt is peeled off just above; edit
-                    // modes fall through to the prompt-clearing "done" gesture below.)
-                    mode == Mode.NORMAL || mode == Mode.RECENTS || mode == Mode.TAG_FILTER ->
-                        when (val last = shown.lastOrNull()) {
-                            is AppRow -> launch(last.entry)
-                            is TagRow -> prompt.setText("#${last.name}")
-                            // Unreachable: COMMAND mode returns at the branch above, so
-                            // no command row ever reaches this one.
-                            is CommandRow -> {}
-                            null -> {}
-                        }
-                    else -> prompt.setText("")
+                // The whole "what does Enter do?" decision is one pure, exhaustively-tested
+                // function (see LauncherLogic.enterAction and LauncherActionsTest); the branch
+                // ORDER lives there, load-bearing and pinned. The Activity keeps only the side
+                // effects. lastOrNull, not firstOrNull: with isStackFromBottom the list fills
+                // upward from the command line, so the LAST row sits directly above the prompt —
+                // the natural Enter target.
+                when (
+                    val action = LauncherLogic.enterAction(
+                        mode = mode,
+                        command = command,
+                        promptBlank = prompt.text.isNullOrBlank(),
+                        lastRow = shown.lastOrNull(),
+                    )
+                ) {
+                    // Clear the prompt BEFORE running it ("" parses to no command), so a
+                    // second Enter can't fire the same command again.
+                    is EnterAction.Run -> { prompt.setText(""); runCommand(action.command) }
+                    is EnterAction.LaunchApp -> launch(action.entry)
+                    // Drill a tag ("#tag"/"##tag"), open the drawer ("*") or clear back to
+                    // NORMAL (""). setText drives the TextWatcher exactly as typing does, so
+                    // the drawer/filter and the visible command line stay one source of truth.
+                    is EnterAction.SetPrompt -> prompt.setText(action.text)
+                    EnterAction.None -> {}
                 }
                 true
             }

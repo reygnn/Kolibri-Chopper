@@ -571,10 +571,25 @@ class LauncherLogicTest {
         assertEquals(listOf("a", "b"), current)
     }
 
-    @Test fun `pushRecent with a non-positive limit yields an empty list`() {
-        // Not reachable in production (RECENTS_LIMIT is 8), but pin take(0)'s behaviour
-        // so a bad limit degrades to "no recents" rather than throwing.
+    @Test fun `pushRecent with a zero limit yields an empty list`() {
+        // Not reachable in production (RECENTS_LIMIT is 8), but pin take(0)'s behaviour: a
+        // zero limit degrades to "no recents" rather than throwing. (A NEGATIVE limit is a
+        // different story — take() throws on it — but that too is unreachable and, as the
+        // next test pins, deliberately not relied on here.)
         assertEquals(emptyList<String>(), LauncherLogic.pushRecent(listOf("a", "b"), "c", 0))
+    }
+
+    @Test fun `pushRecent with a negative limit throws, as take does`() {
+        // Documenting the real boundary rather than pretending it degrades: kotlin's take(n)
+        // rejects a negative count, so a negative limit propagates that exception. RECENTS_LIMIT
+        // is a positive constant, so this can't happen in production — the test exists so the
+        // "zero degrades" note above can't be misread as "any bad limit is safe".
+        try {
+            LauncherLogic.pushRecent(listOf("a", "b"), "c", -1)
+            throw AssertionError("expected an exception for a negative limit")
+        } catch (e: IllegalArgumentException) {
+            // expected: take(-1) rejects the count
+        }
     }
 
     // ---- recentsInDisplayOrder ----------------------------------------------
