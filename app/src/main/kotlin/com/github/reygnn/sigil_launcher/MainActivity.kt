@@ -230,14 +230,11 @@ class MainActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            // A semi-transparent black scrim over the system wallpaper (the window
-            // itself is transparent + windowShowWallpaper, see SigilTheme). ~60%
-            // black dims the wallpaper enough that the light-gray (#D4D4D4) text
-            // stays legible on any wallpaper, while the wallpaper still reads
-            // through — a fully transparent root left bright wallpapers washing the
-            // text out. Only the alpha is tunable here; the RGB stays black to keep
-            // the terminal look.
-            setBackgroundColor(SCRIM_COLOR)
+            // No background: the system wallpaper (window is transparent +
+            // windowShowWallpaper, see SigilTheme) shows through unobstructed. An
+            // earlier semi-transparent scrim over the wallpaper surface flickered
+            // (translucent overdraw on the wallpaper layer), so the root is left
+            // fully transparent — text legibility now rides on the user's wallpaper.
             fitsSystemWindows = false
         }
 
@@ -1259,10 +1256,6 @@ class MainActivity : Activity() {
     private companion object {
         const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
-        // ~60% black over the system wallpaper: dark enough for the light-gray text
-        // to stay readable, sheer enough to still see the wallpaper. Alpha is the
-        // one knob; the RGB stays black for the terminal look.
-        const val SCRIM_COLOR = 0x99000000.toInt()
         const val RECENTS_LIMIT = 8  // how many apps "?" remembers, in memory only
         /** Sub-folder of Downloads that "~backup" writes into. */
         const val BACKUP_DIR = "Sigil"
