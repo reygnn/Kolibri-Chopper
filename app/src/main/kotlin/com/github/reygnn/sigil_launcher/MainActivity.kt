@@ -403,6 +403,10 @@ class MainActivity : Activity() {
                     // typing "*" does, so the drawer and the visible command line stay one
                     // source of truth. It sits before the launch branch so it wins for the
                     // empty prompt; the command branch above already no-ops on "".
+                    //
+                    // The star is a trailing wildcard: setText parks the cursor at index 0
+                    // (before the "*"), so a letter typed next grows "a*", "ab*", … and the
+                    // drawer narrows by prefix (see LauncherLogic.drawerStartingWith).
                     prompt.text.isNullOrBlank() -> prompt.setText("*")
                     // In an edit mode Enter is a "done" gesture: clear the prompt
                     // back to normal instead of launching whatever sits at the top.

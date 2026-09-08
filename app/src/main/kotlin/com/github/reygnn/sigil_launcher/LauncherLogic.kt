@@ -158,6 +158,33 @@ internal object LauncherLogic {
     fun <T : Ordered> drawer(all: List<T>, hidden: Set<String>, favorites: Set<String>): List<T> =
         all.filter { it.key !in hidden || it.key in favorites }
 
+    /**
+     * The "*" drawer, optionally narrowed to labels that START WITH [prefix]. This is what
+     * a NORMAL prompt ending in "*" shows: a bare "*" (empty prefix) is the whole [drawer],
+     * and "<prefix>*" keeps only the drawer entries whose label begins with <prefix>.
+     *
+     * The star is a TRAILING wildcard — the prefix is typed IN FRONT of it (the empty-Enter
+     * shortcut leaves the "*" at the end with the cursor before it), so "a*" reads as the glob
+     * "apps starting with a". [prefix] is ROOT-folded like every other match here, and a
+     * startsWith test is what makes this "Anfangsbuchstaben" rather than the substring [search].
+     *
+     * Deliberately scoped to the drawer, NOT allApps: bare "*" already means "the drawer", so
+     * narrowing it keeps hidden non-favorites out — reach a hidden app by name with a plain
+     * (star-less) search instead. Favorites are ordered last (nearest the prompt under
+     * isStackFromBottom) exactly as the bare drawer is.
+     */
+    fun <T : Ordered> drawerStartingWith(
+        all: List<T>,
+        hidden: Set<String>,
+        favorites: Set<String>,
+        prefix: String,
+    ): List<T> {
+        val p = foldLabel(prefix)
+        val base = drawer(all, hidden, favorites)
+        val narrowed = if (p.isEmpty()) base else base.filter { it.labelLower.startsWith(p) }
+        return orderWithFavorites(narrowed, favorites)
+    }
+
     /** Non-favorites first (in their incoming order), favorites last in [favorites]
      *  rank order — so with isStackFromBottom the config-first favorite sits nearest
      *  the prompt. No favorites configured: [apps] is returned untouched. */
@@ -367,8 +394,12 @@ internal object LauncherLogic {
                 trimmed.isEmpty() -> favoritesInDisplayOrder(allApps, favorites).ifEmpty {
                     orderWithFavorites(drawer(allApps, hidden, favorites), favorites)
                 }
-                // "*": the drawer — everything except hidden, but a favorite is always kept.
-                trimmed == "*" -> orderWithFavorites(drawer(allApps, hidden, favorites), favorites)
+                // "*" is a trailing wildcard: a bare "*" is the whole drawer (everything
+                // except hidden, but a favorite is always kept), and "<prefix>*" narrows
+                // that drawer to labels STARTING WITH <prefix>. The empty-Enter shortcut
+                // drops the user into a bare "*" with the cursor before it, so typing a
+                // letter grows "a*", "ab*", … and the list follows by prefix.
+                trimmed.endsWith("*") -> drawerStartingWith(allApps, hidden, favorites, trimmed.dropLast(1))
                 // Plain search spans ALL apps, so a hidden app stays reachable by name.
                 else -> search(allApps, trimmed)
             }

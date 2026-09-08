@@ -73,6 +73,36 @@ class LauncherRowsTest {
         assertEquals(listOf("com.c/C", "com.a/A"), appKeys(rowsFor(Mode.NORMAL, "*")))
     }
 
+    @Test fun `a prefix before the star narrows the drawer to labels starting with it`() {
+        // "a*" is the drawer kept to labels starting with "a": only Alpha. Charlie stays out.
+        assertEquals(listOf("com.a/A"), appKeys(rowsFor(Mode.NORMAL, "a*")))
+        assertEquals(listOf("com.c/C"), appKeys(rowsFor(Mode.NORMAL, "c*")))
+    }
+
+    @Test fun `the star prefix is case-insensitive`() {
+        assertEquals(listOf("com.a/A"), appKeys(rowsFor(Mode.NORMAL, "A*")))
+    }
+
+    @Test fun `the star prefix matches the START only, never a substring`() {
+        // "lph" is inside "Alpha" but not its start, so unlike a plain search it matches nothing.
+        assertTrue(appKeys(rowsFor(Mode.NORMAL, "lph*")).isEmpty())
+    }
+
+    @Test fun `the star prefix excludes a hidden non-favorite even when its name matches`() {
+        // Bravo is hidden and not a favorite, so the drawer never carries it — "b*" is empty,
+        // in deliberate contrast to the plain "brav" search below which reaches hidden apps.
+        assertTrue(appKeys(rowsFor(Mode.NORMAL, "b*")).isEmpty())
+    }
+
+    @Test fun `the star prefix keeps a hidden FAVORITE, mirroring the bare drawer`() {
+        // Favoriting overrides hiding for the drawer, so a hidden favorite survives "b*".
+        val favsWithHiddenB = linkedSetOf("com.b/B")
+        val rows = LauncherLogic.rowsFor(
+            Mode.NORMAL, "b*", apps, hidden, favsWithHiddenB, tags, recents, null,
+        )
+        assertEquals(listOf("com.b/B"), appKeys(rows))
+    }
+
     @Test fun `plain search spans all apps including hidden ones`() {
         assertEquals(listOf("com.b/B"), appKeys(rowsFor(Mode.NORMAL, "brav")))
     }
