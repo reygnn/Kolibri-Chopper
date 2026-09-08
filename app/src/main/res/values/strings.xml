@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Chopper</string>
+    <string name="app_name">Sigil Launcher</string>
     <string name="hint_search">&gt; search</string>
     <string name="clear_prompt">Clear prompt</string>
     <string name="hint_rename_name">Name</string>
@@ -11,10 +11,10 @@
     <!-- One-shot "~" commands. %1$s in toast_backup_ok is the written file name. -->
     <string name="toast_saved">config written to disk</string>
     <string name="toast_save_failed">save failed — the config was NOT written</string>
-    <string name="toast_backup_ok">backup: Download/KolibriChopper/%1$s</string>
+    <string name="toast_backup_ok">backup: Download/Sigil/%1$s</string>
     <string name="toast_backup_failed">backup failed — nothing was written</string>
     <string name="toast_restore_ok">config restored</string>
-    <string name="toast_restore_failed">restore failed — the backup is not a readable chopper.json. Nothing was changed.</string>
+    <string name="toast_restore_failed">restore failed — the backup is not a readable sigil.json. Nothing was changed.</string>
     <string name="toast_restore_none">no backup found — run ~backup first, or ~restore-saf to pick a file</string>
     <string name="toast_restore_no_picker">no file picker on this device</string>
     <!-- Spoken row descriptions for the edit modes (the "[x]"/"[ ]" glyph is not

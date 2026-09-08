@@ -1,4 +1,4 @@
-package com.github.reygnn.kolibri_chopper
+package com.github.reygnn.sigil_launcher
 
 import java.util.Locale
 
@@ -75,7 +75,7 @@ internal object LauncherLogic {
      * the abbreviation resolver and the exact parser can never drift apart — adding a
      * command here is the whole change.
      *
-     * Ordered harmless-first: ~load and ~save only touch our own chopper.json, ~backup
+     * Ordered harmless-first: ~load and ~save only touch our own sigil.json, ~backup
      * only writes a copy out to Downloads, and the two that REPLACE the live config —
      * ~restore and ~restore-saf — come last. The overview renders them in this order, so
      * the destructive pair sits furthest from the prompt, never nearest it.

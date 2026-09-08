@@ -1,4 +1,4 @@
-# Chopper version catalog — deliberately almost empty.
+# Sigil Launcher version catalog — deliberately almost empty.
 # The whole point of this project is: NO dependencies IN THE APK. Not Compose,
 # not AndroidX, not Hilt, not DataStore — nothing but the Kotlin stdlib (added
 # automatically by AGP 9's built-in Kotlin) and the Android platform APIs.

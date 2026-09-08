@@ -1,7 +1,7 @@
-package com.github.reygnn.kolibri_chopper
+package com.github.reygnn.sigil_launcher
 
 /**
- * The whole editable state, mirroring chopper.json 1:1. It is the single
+ * The whole editable state, mirroring sigil.json 1:1. It is the single
  * source of truth for hidden/favorite membership: the filter and the adapter
  * read it live, so a toggle only mutates this + saves + notifies — the loaded
  * AppEntry list never has to be rebuilt. The flattened component string
@@ -11,7 +11,7 @@ package com.github.reygnn.kolibri_chopper
  * `internal` (not private-nested in MainActivity) so [ConfigJson] and its unit
  * tests can name it; it holds no framework types, so it stays JVM-testable.
  */
-internal class ChopperConfig(
+internal class SigilConfig(
     val hidden: MutableSet<String> = linkedSetOf(),
     // A LinkedHashSet, not a List: favorites need BOTH insertion order (for the
     // rank used when laying rows out) AND O(1) membership (getView tests it per
@@ -21,7 +21,7 @@ internal class ChopperConfig(
     val favorites: MutableSet<String> = linkedSetOf(),
     val names: MutableMap<String, String> = linkedMapOf(),
     // Per-app tags for the "#" filter. Values are canonical (ROOT-folded, deduped,
-    // see LauncherLogic.parseTags), ordered first-entered. Stored in chopper.json like
+    // see LauncherLogic.parseTags), ordered first-entered. Stored in sigil.json like
     // names; a key with no tags is dropped rather than persisting an empty list.
     val tags: MutableMap<String, MutableList<String>> = linkedMapOf(),
 ) {
@@ -33,7 +33,7 @@ internal class ChopperConfig(
      * a read during a structural write could otherwise throw. Values are
      * immutable Strings, so copying the containers is enough.
      */
-    fun snapshot() = ChopperConfig(
+    fun snapshot() = SigilConfig(
         LinkedHashSet(hidden),
         LinkedHashSet(favorites),
         LinkedHashMap(names),

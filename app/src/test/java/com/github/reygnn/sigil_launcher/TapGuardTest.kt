@@ -1,4 +1,4 @@
-package com.github.reygnn.kolibri_chopper
+package com.github.reygnn.sigil_launcher
 
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

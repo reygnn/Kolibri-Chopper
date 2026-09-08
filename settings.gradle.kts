@@ -25,5 +25,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Kolibri_Chopper"
+rootProject.name = "Sigil_Launcher"
 include(":app")

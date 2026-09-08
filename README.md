@@ -1,4 +1,4 @@
-# Kolibri Chopper
+# Sigil Launcher
 
 A **text-only, terminal-styled Android launcher** — the radical strip-down of
 [Kolibri Launcher](../Kolibri_Launcher). The experiment: kick out *everything*
@@ -45,14 +45,14 @@ a launcher does not strictly need and see how small the APK gets.
     - `~` / `~load` — reload the config from disk
     - `~save` — write the in-memory config out now (saves are automatic anyway;
       this is the explicit one)
-    - `~backup` — export the config to `Download/KolibriChopper/chopper.json`,
+    - `~backup` — export the config to `Download/Sigil/sigil.json`,
       replacing the previous one. There is always exactly one backup, never a pile
       of timestamped copies. An ordinary file: it survives an uninstall and can be
       copied off the device (that's how you move a config to another phone), which
       the internal `.bak` mirror cannot
     - `~restore` — adopt that backup again. No file picker: one file, known name.
       The config being replaced is written next to it as
-      `chopper-pre-restore.json`, so a restore never destroys what it overwrote
+      `sigil-pre-restore.json`, so a restore never destroys what it overwrote
       without a trace. A backup that doesn't parse changes nothing
     - `~restore-saf` — the same, but you pick the file in the system document
       picker. Plain `~restore` only sees files this app itself wrote, so a config
@@ -73,24 +73,24 @@ a launcher does not strictly need and see how small the APK gets.
 Two lines are maintained; pick whichever fits.
 
 - **0.2.x (this line)** — adds favorites (with reordering), hidden apps, custom
-  names and per-app tags, stored in `chopper.json`. App enumeration is
+  names and per-app tags, stored in `sigil.json`. App enumeration is
   single-user only.
 - **0.1.x** — deliberately barebones and staying that way: no config, no
   persistence, just list, filter and launch. It is also the only line that carries
   the `LauncherApps` multi-user listing (work-profile, cloned and private-space
   apps). Choose it from the
-  [Releases](https://github.com/reygnn/Kolibri-Chopper/releases) page (latest:
+  [Releases](https://github.com/reygnn/Sigil-Launcher/releases) page (latest:
   0.1.3) if you prefer the smaller, stateless launcher — or need cross-profile apps.
 
 ## What was chopped
 
-Compared to Kolibri Launcher, the Chopper drops **all** of it:
+Compared to Kolibri Launcher, Sigil Launcher drops **all** of it:
 
 - no Compose, no Material, **no AndroidX at all** — platform widgets only
 - no Hilt / DI — a single `Activity` wires itself
 - no Navigation / Fragments — one `Activity` (rename is a bare platform dialog)
 - no DataStore / Room / SharedPreferences — the small amount of state (hidden
-  apps, favorites, custom names, tags) is a single hand-rolled `chopper.json` in
+  apps, favorites, custom names, tags) is a single hand-rolled `sigil.json` in
   `filesDir`, written durably (temp-file + fsync + rename, then a directory
   fsync so the rename itself survives power-loss, not just a crash); the previous
   good version is rotated into a `.bak` that recovery falls back to and heals the
@@ -102,7 +102,7 @@ The launcher is a handful of small files: `MainActivity.kt` (the framework
 wiring) plus the pure, unit-tested logic split out beside it — `LauncherLogic.kt`
 (mode parsing, filtering, favorite ordering and reordering), `TapGuard.kt` (the
 tap/long-press staleness check that keeps a click acting on the row it aimed at),
-`ChopperConfig.kt` (the config model), `ConfigJson.kt` (the `chopper.json`
+`SigilConfig.kt` (the config model), `ConfigJson.kt` (the `sigil.json`
 round-trip) and `ConfigStore.kt` (the durable load/save/backup file layer). The only
 *shipped* dependencies are the Kotlin stdlib (added automatically by AGP's
 built-in Kotlin); JUnit and org.json are `testImplementation` only, so the

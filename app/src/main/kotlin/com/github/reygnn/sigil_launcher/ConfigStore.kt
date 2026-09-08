@@ -1,10 +1,10 @@
-package com.github.reygnn.kolibri_chopper
+package com.github.reygnn.sigil_launcher
 
 import java.io.File
 import java.io.FileOutputStream
 
 /**
- * The chopper.json file layer: reading the config with its .bak fallback, and publishing
+ * The sigil.json file layer: reading the config with its .bak fallback, and publishing
  * it back atomically with a validated .bak rotation. [ConfigJson] owns the JSON; this owns
  * the FILES.
  *
@@ -17,18 +17,24 @@ import java.io.FileOutputStream
  *
  * Everything it needs from Android is injected, so a test can drive it against a temp
  * directory:
- *   [dir]     where chopper.json, its .bak and its .tmp live (filesDir in the app)
+ *   [dir]     where sigil.json, its .bak and its .tmp live (filesDir in the app)
  *   [log]     android.util.Log in the app, a collector in tests — this class never
  *             throws, so the log IS its error channel and a test can assert on it
  *   [syncDir] fsync of the directory, the one genuinely Android-only call
  *             (android.system.Os). File CONTENTS are synced with plain
  *             java.io.FileDescriptor.sync(), which works on any JVM and is therefore
  *             exercised for real by the tests.
+ *   [rename]  the atomic rename primitive, defaulting to [File.renameTo]. A seam only
+ *             so a test can force it to fail on a chosen file: the two "rename refused"
+ *             paths below (the .bak rotation and the temp->primary publish with its
+ *             in-place fallback) never fire on a normal filesystem, so a real temp dir
+ *             cannot reach them. Production is unchanged — it uses [File.renameTo].
  */
 internal class ConfigStore(
     private val dir: File,
     private val log: (String, Exception?) -> Unit,
     private val syncDir: (File) -> Unit,
+    private val rename: (File, File) -> Boolean = File::renameTo,
 ) {
 
     private val primary get() = File(dir, CONFIG_FILE)
@@ -36,7 +42,7 @@ internal class ConfigStore(
     private val temp get() = File(dir, "$CONFIG_FILE.tmp")
 
     /**
-     * Read the config, preferring the primary chopper.json and falling back to the .bak
+     * Read the config, preferring the primary sigil.json and falling back to the .bak
      * mirror written by [write] if the primary is missing or unreadable. A missing file
      * (fresh install) yields an empty config silently; a present but unparseable primary
      * is logged and .bak is tried before giving up to empty. A HOME app must never throw
@@ -44,7 +50,7 @@ internal class ConfigStore(
      * than crashing — and a single torn read of the primary no longer discards the user's
      * favorites/hidden/names/tags.
      */
-    fun load(): ChopperConfig {
+    fun load(): SigilConfig {
         parse(primary)?.let { return it }
         parse(backup)?.let { recovered ->
             log("primary config unreadable — recovered from .bak", null)
@@ -56,7 +62,7 @@ internal class ConfigStore(
             write(ConfigJson.serialize(recovered), rotateBackup = false)
             return recovered
         }
-        return ChopperConfig()
+        return SigilConfig()
     }
 
     /**
@@ -64,7 +70,7 @@ internal class ConfigStore(
      * logged) or unparseable (logged, so real corruption is visible) — the caller decides
      * what to fall back to. Never throws.
      */
-    private fun parse(file: File): ChopperConfig? {
+    private fun parse(file: File): SigilConfig? {
         if (!file.isFile) return null
         val text = try {
             file.readText()
@@ -79,7 +85,7 @@ internal class ConfigStore(
     }
 
     /**
-     * Atomically publish [payload] as chopper.json, writing the WHOLE file each time.
+     * Atomically publish [payload] as sigil.json, writing the WHOLE file each time.
      * MUST be called from the caller's single disk-writing thread so concurrent writes
      * stay serialized on the temp file. Never throws — a failure degrades durability, not
      * correctness, and is logged: a HOME app must not crash on a bad save. Returns whether
@@ -130,7 +136,7 @@ internal class ConfigStore(
                 when {
                     parse(dst) == null ->
                         log("config primary invalid — keeping .bak, skipping rotate", null)
-                    !dst.renameTo(bak) ->
+                    !rename(dst, bak) ->
                         log("config .bak rotate failed (non-fatal)", null)
                 }
             }
@@ -141,7 +147,7 @@ internal class ConfigStore(
             //     in-place fallback only fires on an exotic FS that still refused; it
             //     fsyncs (unlike the old copyTo), and .bak still holds a good config,
             //     so even a torn in-place dst stays recoverable.
-            if (!tmp.renameTo(dst)) {
+            if (!rename(tmp, dst)) {
                 FileOutputStream(dst).use { fos ->
                     fos.write(payload.toByteArray(Charsets.UTF_8))
                     fos.flush()
@@ -160,6 +166,6 @@ internal class ConfigStore(
     }
 
     companion object {
-        const val CONFIG_FILE = "chopper.json"
+        const val CONFIG_FILE = "sigil.json"
     }
 }

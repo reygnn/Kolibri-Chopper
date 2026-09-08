@@ -2,7 +2,7 @@
 <resources>
     <!-- Platform Material theme, no AppCompat. Solid black window so the
          terminal look is up before the first frame is even drawn. -->
-    <style name="ChopperTheme" parent="@android:style/Theme.Material.NoActionBar">
+    <style name="SigilTheme" parent="@android:style/Theme.Material.NoActionBar">
         <!-- Drawn behind the (transparent, enforced edge-to-edge on SDK 36) system
              bars — this alone carries the terminal black. statusBarColor /
              navigationBarColor are deprecated no-ops under edge-to-edge, so omitted. -->

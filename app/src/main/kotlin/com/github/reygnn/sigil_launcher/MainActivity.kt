@@ -1,4 +1,4 @@
-package com.github.reygnn.kolibri_chopper
+package com.github.reygnn.sigil_launcher
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -25,6 +25,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.BaseAdapter
@@ -40,12 +41,12 @@ import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 
 /**
- * The entire Kolibri Chopper: a text-only, terminal-styled launcher in one
+ * The entire Sigil Launcher: a text-only, terminal-styled launcher in one
  * file. Enumerates the current user's launchable apps via a
  * [android.content.pm.PackageManager] MAIN/LAUNCHER query, lists them in
  * monospace light gray, filters as you type, launches on tap/Enter.
  *
- * Config lives in the app's own internal storage (chopper.json in filesDir) — no
+ * Config lives in the app's own internal storage (sigil.json in filesDir) — no
  * storage permission on any Android version, and the app owns it end to end, so
  * it is edited entirely through the in-app modes below, never a text editor.
  * Prompt grammar (leading sigil = mode):
@@ -69,13 +70,13 @@ import java.util.concurrent.RejectedExecutionException
  * The "~" commands. Tap one in that overview, or type enough of one to be
  * unambiguous ("~b" can only be "~backup") and press Enter. Each acts once and
  * clears the prompt:
- *   ~ / ~load  reload chopper.json from disk (the config is cached otherwise)
+ *   ~ / ~load  reload sigil.json from disk (the config is cached otherwise)
  *   ~save      flush the in-memory config to disk (saves are automatic; this is
  *              the explicit "write it now" for peace of mind)
- *   ~backup    export the config to Download/KolibriChopper/chopper.json, replacing
+ *   ~backup    export the config to Download/Sigil/sigil.json, replacing
  *              the previous one — there is always exactly one backup
  *   ~restore   adopt that backup again. No picker: one file, known name. The config
- *              being replaced is written next to it as chopper-pre-restore.json, so
+ *              being replaced is written next to it as sigil-pre-restore.json, so
  *              a restore never destroys the state it overwrote without a trace.
  *   ~restore-saf
  *              same, but PICK the file via the system document picker. The escape
@@ -115,7 +116,7 @@ class MainActivity : Activity() {
     private val fgColor = 0xFFD4D4D4.toInt()     // pleasant light gray
     private val fgColorDim = 0xFF808080.toInt()  // dimmer gray, for the hint
 
-    private var cfg = ChopperConfig()
+    private var cfg = SigilConfig()
     // The config is read from disk once, then cfg IS the cache — the app is its
     // only writer, so every HOME press re-reading it would be wasted I/O. The "~"
     // command forces a fresh read (see refreshApps / the Enter handler).
@@ -161,7 +162,7 @@ class MainActivity : Activity() {
     private var shown: List<Row<AppEntry>> = emptyList()
 
     // The "?" mode: the component keys of the most recently launched apps, newest
-    // first. Deliberately IN MEMORY ONLY — never written to chopper.json — so it
+    // first. Deliberately IN MEMORY ONLY — never written to sigil.json — so it
     // starts empty on every cold start. Updated only by launch() on a successful
     // start; capped at RECENTS_LIMIT via LauncherLogic.pushRecent.
     private var recentKeys: List<String> = emptyList()
@@ -217,6 +218,15 @@ class MainActivity : Activity() {
         // up for the keyboard on its own — adjustResize is a no-op and the IME just
         // covers the prompt. So we own the insets and pad for the IME ourselves (below).
         window.setDecorFitsSystemWindows(false)
+
+        // Keyboard-first launcher: this is a type-to-filter command line, so the IME is
+        // part of the resting state, not something the user should have to summon. Ask the
+        // window to bring it up whenever it receives focus — this covers the cold start and
+        // every return to the foreground. Warm re-entry is additionally nudged from
+        // onResume via showKeyboard(), which under decorFitsSystemWindows(false) is the
+        // reliable path. Back still hides the IME on demand (see the back callback): that
+        // is a deliberate user override of the default, not a change to it.
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -384,6 +394,16 @@ class MainActivity : Activity() {
                         is TagRow -> prompt.setText("##${last.name}")
                         else -> prompt.setText("")
                     }
+                    // A "leeres Enter" — Enter on an empty prompt — opens the full drawer
+                    // via "*" instead of launching the favorite nearest the command line.
+                    // An empty prompt is always NORMAL (every other mode needs a sigil) and
+                    // shows favorites, so its previous Enter target was the top favorite;
+                    // routing it to "*" makes Enter-from-rest mean "show everything" rather
+                    // than "launch this one". setText drives the TextWatcher exactly as
+                    // typing "*" does, so the drawer and the visible command line stay one
+                    // source of truth. It sits before the launch branch so it wins for the
+                    // empty prompt; the command branch above already no-ops on "".
+                    prompt.text.isNullOrBlank() -> prompt.setText("*")
                     // In an edit mode Enter is a "done" gesture: clear the prompt
                     // back to normal instead of launching whatever sits at the top.
                     // lastOrNull, not firstOrNull: with isStackFromBottom the list
@@ -393,8 +413,8 @@ class MainActivity : Activity() {
                     // alphabetically-first match instead.)
                     // The read modes act on the row nearest the command line: launch it
                     // if it's an app, or — in the bare-"#" tag overview — drill into the
-                    // nearest tag. (edit modes fall through to the prompt-clearing
-                    // "done" gesture below.)
+                    // nearest tag. (An empty NORMAL prompt is peeled off just above; edit
+                    // modes fall through to the prompt-clearing "done" gesture below.)
                     mode == Mode.NORMAL || mode == Mode.RECENTS || mode == Mode.TAG_FILTER ->
                         when (val last = shown.lastOrNull()) {
                             is AppRow -> launch(last.entry)
@@ -443,6 +463,12 @@ class MainActivity : Activity() {
 
         setContentView(root)
 
+        // Make the prompt the initial input target so the always-visible IME (set above)
+        // has somewhere to type on the very first frame. The prompt is the only text field,
+        // and the clear button / list rows don't take focus in touch mode, so this just
+        // makes the natural target explicit rather than relying on default focus order.
+        prompt.requestFocus()
+
         // Back on a HOME launcher must not finish the activity — we're the home
         // screen, so the platform's default callback (routed here on targetSdk 36
         // whether or not we opt in) would just finish us and bounce straight back
@@ -467,6 +493,12 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         refreshApps()
+        // Re-raise the IME on every return to the foreground (HOME re-entry, coming back
+        // from a launched app or a dialog). The window flag set in onCreate covers the
+        // cold start; this is the reliable warm-path show under decorFitsSystemWindows(false).
+        // onResume never fires from a Back-dismiss (Back is swallowed and keeps us in the
+        // launcher), so this never fights a user who deliberately hid the keyboard.
+        showKeyboard()
     }
 
     /**
@@ -498,7 +530,7 @@ class MainActivity : Activity() {
         // Snapshot on the MAIN thread: the loader must not read the live cfg, or
         // loadApps() enumerating cfg.names could race a rename/toggle mutating it.
         // Skipped when we're about to reload from disk (that path ignores it).
-        val cached = if (loadConfigNow) ChopperConfig() else cfg.snapshot()
+        val cached = if (loadConfigNow) SigilConfig() else cfg.snapshot()
         submitIo {
             // Already superseded by a newer enumeration while queued: skip the work.
             if (generation != loadGeneration) return@submitIo
@@ -560,7 +592,7 @@ class MainActivity : Activity() {
             ioExecutor.execute(task)
             true
         } catch (e: RejectedExecutionException) {
-            Log.w("Chopper", "IO task rejected (executor shutting down)", e)
+            Log.w("Sigil", "IO task rejected (executor shutting down)", e)
             false
         }
     }
@@ -587,14 +619,14 @@ class MainActivity : Activity() {
     // ---- config -------------------------------------------------------------
 
     /**
-     * The chopper.json file layer. Everything Android-specific it needs is injected here:
+     * The sigil.json file layer. Everything Android-specific it needs is injected here:
      * filesDir, android.util.Log and the directory fsync. Loading, rotating and publishing
      * itself lives in [ConfigStore], where it is unit-tested away from the Activity.
      */
     private val store by lazy {
         ConfigStore(
             dir = filesDir,
-            log = { msg, e -> if (e != null) Log.w("Chopper", msg, e) else Log.w("Chopper", msg) },
+            log = { msg, e -> if (e != null) Log.w("Sigil", msg, e) else Log.w("Sigil", msg) },
             syncDir = ::fsyncDir,
         )
     }
@@ -608,7 +640,7 @@ class MainActivity : Activity() {
         BackupStore(
             resolver = contentResolver,
             subDir = BACKUP_DIR,
-            log = { msg, e -> if (e != null) Log.w("Chopper", msg, e) else Log.w("Chopper", msg) },
+            log = { msg, e -> if (e != null) Log.w("Sigil", msg, e) else Log.w("Sigil", msg) },
         )
     }
 
@@ -703,7 +735,7 @@ class MainActivity : Activity() {
                 // A temp torn mid-write is no risk: parseForeign refuses anything that is
                 // not a readable config, so a half-written one is rejected, not adopted.
                 ?: backupStore.findOwn("$BACKUP_NAME.tmp")?.also {
-                    Log.w("Chopper", "restore: no published backup — using an interrupted one")
+                    Log.w("Sigil", "restore: no published backup — using an interrupted one")
                 }
             val text = uri?.let { backupStore.readText(it) }
             runOnUiThread {
@@ -749,7 +781,7 @@ class MainActivity : Activity() {
         try {
             startActivityForResult(intent, REQ_RESTORE)
         } catch (e: ActivityNotFoundException) {
-            Log.w("Chopper", "no document picker on this device", e)
+            Log.w("Sigil", "no document picker on this device", e)
             toast(getString(R.string.toast_restore_no_picker))
         }
     }
@@ -793,7 +825,7 @@ class MainActivity : Activity() {
         // What a restore actually adopted, so a "my favorites are gone" report can be
         // settled from the log instead of guessed at.
         Log.i(
-            "Chopper",
+            "Sigil",
             "restore: ${restored.favorites.size} favorites, ${restored.hidden.size} hidden, " +
                 "${restored.names.size} names, ${restored.tags.size} tagged",
         )
@@ -835,7 +867,7 @@ class MainActivity : Activity() {
             fd = Os.open(dir.path, OsConstants.O_RDONLY, 0)
             Os.fsync(fd)
         } catch (e: ErrnoException) {
-            Log.w("Chopper", "dir fsync failed (non-fatal): ${dir.path}", e)
+            Log.w("Sigil", "dir fsync failed (non-fatal): ${dir.path}", e)
         } finally {
             if (fd != null) {
                 try {
@@ -948,7 +980,7 @@ class MainActivity : Activity() {
     /**
      * Move the picked favorite so it takes [targetKey]'s current slot, then persist.
      * cfg.favorites is a LinkedHashSet (insertion order == display rank, see
-     * ChopperConfig): copy it to a list, splice, and rebuild the set in the new
+     * SigilConfig): copy it to a list, splice, and rebuild the set in the new
      * order. Inserting AFTER the target when moving down / AT it when moving up lands
      * the picked row exactly where the target sat, shifting the rows between by one.
      *
@@ -1034,7 +1066,7 @@ class MainActivity : Activity() {
 
     // ---- apps ---------------------------------------------------------------
 
-    private fun loadApps(cfg: ChopperConfig): List<AppEntry>? {
+    private fun loadApps(cfg: SigilConfig): List<AppEntry>? {
         val pm = packageManager
         val self = packageName
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
@@ -1049,7 +1081,7 @@ class MainActivity : Activity() {
         val resolved = try {
             pm.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(0))
         } catch (e: RuntimeException) {
-            Log.w("Chopper", "app enumeration failed", e)
+            Log.w("Sigil", "app enumeration failed", e)
             return null  // failure sentinel: keep the current list, don't wipe it
         }
         return resolved.mapNotNull { ri ->
@@ -1076,7 +1108,7 @@ class MainActivity : Activity() {
                     systemLabel = systemLabel,
                 )
             } catch (e: RuntimeException) {
-                Log.w("Chopper", "skipping app", e)
+                Log.w("Sigil", "skipping app", e)
                 null
             }
         }.sortedBy { it.labelLower }
@@ -1148,16 +1180,25 @@ class MainActivity : Activity() {
             recentKeys = LauncherLogic.pushRecent(recentKeys, entry.key, RECENTS_LIMIT)
         } catch (e: ActivityNotFoundException) {
             // Component gone since the list loaded (uninstall race).
-            Log.w("Chopper", "launch unavailable: ${entry.component}")
+            Log.w("Sigil", "launch unavailable: ${entry.component}")
             Toast.makeText(this, getString(R.string.toast_not_found, entry.label), Toast.LENGTH_SHORT).show()
         } catch (e: SecurityException) {
-            Log.w("Chopper", "launch denied: ${entry.component}", e)
+            Log.w("Sigil", "launch denied: ${entry.component}", e)
             Toast.makeText(this, getString(R.string.toast_denied, entry.label), Toast.LENGTH_SHORT).show()
         } catch (e: RuntimeException) {
             // Dead system_server or similar — don't crash HOME.
-            Log.w("Chopper", "launch failed: ${entry.component}", e)
+            Log.w("Sigil", "launch failed: ${entry.component}", e)
             Toast.makeText(this, getString(R.string.toast_not_found, entry.label), Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun showKeyboard() {
+        // requestFocus makes the prompt the input target; the window insets controller is
+        // the modern IME show that cooperates with the app-owned insets above. The legacy
+        // InputMethodManager.showSoftInput wants the view already laid out and the window
+        // focused, so it is unreliable straight from onResume — the controller is not.
+        prompt.requestFocus()
+        prompt.windowInsetsController?.show(WindowInsets.Type.ime())
     }
 
     private fun hideKeyboard() {
@@ -1254,12 +1295,12 @@ class MainActivity : Activity() {
         const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
         const val RECENTS_LIMIT = 8  // how many apps "?" remembers, in memory only
         /** Sub-folder of Downloads that "~backup" writes into. */
-        const val BACKUP_DIR = "KolibriChopper"
+        const val BACKUP_DIR = "Sigil"
         // Fixed names, not timestamped ones: there is exactly ONE backup and ONE undo
         // point, each overwritten in place. That is what lets "~restore" skip a file
         // picker — it already knows the name of the only file it could mean.
-        const val BACKUP_NAME = "chopper.json"
-        const val PRE_RESTORE_NAME = "chopper-pre-restore.json"
+        const val BACKUP_NAME = "sigil.json"
+        const val PRE_RESTORE_NAME = "sigil-pre-restore.json"
         const val REQ_RESTORE = 1
     }
 }

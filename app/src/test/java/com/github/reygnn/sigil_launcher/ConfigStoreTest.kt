@@ -1,4 +1,4 @@
-package com.github.reygnn.kolibri_chopper
+package com.github.reygnn.sigil_launcher
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -32,9 +32,9 @@ class ConfigStoreTest {
     private val logs = mutableListOf<String>()
     private var dirSyncs = 0
 
-    private val primary get() = File(dir, "chopper.json")
-    private val backup get() = File(dir, "chopper.json.bak")
-    private val temp get() = File(dir, "chopper.json.tmp")
+    private val primary get() = File(dir, "sigil.json")
+    private val backup get() = File(dir, "sigil.json.bak")
+    private val temp get() = File(dir, "sigil.json.tmp")
 
     @Before
     fun setUp() {
@@ -46,8 +46,18 @@ class ConfigStoreTest {
         )
     }
 
+    /** A store identical to [store] but with the rename primitive overridden, so a test
+     *  can force a chosen rename to fail and drive the two "rename refused" branches that
+     *  a real filesystem never reaches. */
+    private fun storeWith(rename: (File, File) -> Boolean) = ConfigStore(
+        dir = dir,
+        log = { msg, _ -> logs += msg },
+        syncDir = { dirSyncs++ },
+        rename = rename,
+    )
+
     private fun cfg(vararg favorites: String) =
-        ChopperConfig(favorites = LinkedHashSet(favorites.toList()))
+        SigilConfig(favorites = LinkedHashSet(favorites.toList()))
 
     private fun json(vararg favorites: String) = ConfigJson.serialize(cfg(*favorites))
 
@@ -118,7 +128,7 @@ class ConfigStoreTest {
 
     @Test
     fun `a directory where the config should be is treated as absent, not fatal`() {
-        File(dir, "chopper.json").mkdirs()
+        File(dir, "sigil.json").mkdirs()
 
         assertTrue(store.load().favorites.isEmpty())
     }
@@ -210,7 +220,7 @@ class ConfigStoreTest {
 
     @Test
     fun `a written config round-trips back through load`() {
-        val original = ChopperConfig(
+        val original = SigilConfig(
             hidden = linkedSetOf("h/1"),
             favorites = linkedSetOf("f/1", "f/2"),
             names = linkedMapOf("f/1" to "Custom"),
@@ -239,5 +249,79 @@ class ConfigStoreTest {
         assertEquals(listOf("first"), loaded.favorites.toList())
         assertTrue(backup.exists())
         assertEquals(listOf("first"), ConfigJson.parse(primary.readText())!!.favorites.toList())
+    }
+
+    // ---- the rename seam: forced-failure paths -------------------------------
+    //
+    // The .bak rotation and the temp->primary publish both go through rename, and both
+    // have a "rename refused" branch that a real filesystem never triggers (POSIX rename
+    // onto a free — or even an existing — name always succeeds). The seam forces the
+    // chosen rename to fail so those branches are exercised for real, on real files.
+
+    /**
+     * Step 3's in-place fallback: if the temp->primary rename is refused (the exotic FS
+     * the comment describes), the payload must still be published by writing dst directly,
+     * and the temp file must not be left behind. The write still succeeds.
+     */
+    @Test
+    fun `a refused publish rename falls back to an in-place write`() {
+        // Fail only the publish rename (temp -> primary); leave rotation alone.
+        val s = storeWith { src, dst -> if (src.name.endsWith(".tmp")) false else src.renameTo(dst) }
+
+        assertTrue(s.write(json("a/1"), rotateBackup = true))
+
+        assertEquals(listOf("a/1"), ConfigJson.parse(primary.readText())!!.favorites.toList())
+        assertFalse("the temp file must not survive the in-place fallback", temp.exists())
+    }
+
+    /**
+     * The in-place fallback still fsyncs the directory — it is a real publish, not a
+     * shortcut, so the rename-durability sync at step 4 must run exactly as on the fast
+     * path. (A regression here would silently trade durability for the fallback.)
+     */
+    @Test
+    fun `a refused publish rename still fsyncs the directory`() {
+        val s = storeWith { src, dst -> if (src.name.endsWith(".tmp")) false else src.renameTo(dst) }
+
+        s.write(json("a/1"), rotateBackup = true)
+
+        assertEquals(1, dirSyncs)
+    }
+
+    /**
+     * The reason the in-place fallback is safe: even if its non-atomic dst write tore,
+     * .bak still holds the previous good copy. So after a fallback publish the .bak
+     * mirror rotated in this same save must remain a valid, loadable config.
+     */
+    @Test
+    fun `an in-place publish leaves the bak mirror intact and recoverable`() {
+        store.write(json("first"), rotateBackup = true)   // primary = first, no .bak yet
+        val s = storeWith { src, dst -> if (src.name.endsWith(".tmp")) false else src.renameTo(dst) }
+
+        // Rotation (first -> .bak) uses rename with a non-.tmp source, so it still runs;
+        // only the publish falls back in place.
+        assertTrue(s.write(json("second"), rotateBackup = true))
+
+        assertEquals(listOf("second"), ConfigJson.parse(primary.readText())!!.favorites.toList())
+        assertEquals(listOf("first"), ConfigJson.parse(backup.readText())!!.favorites.toList())
+    }
+
+    /**
+     * Step 2's rotate failure is non-fatal: if promoting the primary into .bak is refused,
+     * we log and carry on — the new primary is still published, and the existing .bak is
+     * left exactly as it was rather than half-updated or destroyed.
+     */
+    @Test
+    fun `a refused bak rotation is non-fatal and preserves the existing bak mirror`() {
+        store.write(json("first"), rotateBackup = true)
+        store.write(json("second"), rotateBackup = true)   // .bak = "first"
+        // Fail only the rotation (primary -> .bak); the publish rename still succeeds.
+        val s = storeWith { src, dst -> if (dst.name.endsWith(".bak")) false else src.renameTo(dst) }
+
+        assertTrue(s.write(json("third"), rotateBackup = true))
+
+        assertEquals(listOf("third"), ConfigJson.parse(primary.readText())!!.favorites.toList())
+        assertEquals(listOf("first"), ConfigJson.parse(backup.readText())!!.favorites.toList())
+        assertTrue(loggedAbout("rotate failed"))
     }
 }

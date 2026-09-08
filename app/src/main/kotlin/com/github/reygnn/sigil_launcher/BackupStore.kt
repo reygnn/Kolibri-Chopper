@@ -1,4 +1,4 @@
-package com.github.reygnn.kolibri_chopper
+package com.github.reygnn.sigil_launcher
 
 import android.content.ContentResolver
 import android.content.ContentUris
@@ -14,7 +14,7 @@ import java.io.InputStream
 
 /**
  * The shared-storage backup layer: publishing the config into Download/[subDir] and reading
- * it back. [ConfigStore] owns chopper.json in filesDir; this owns the off-device copy that
+ * it back. [ConfigStore] owns sigil.json in filesDir; this owns the off-device copy that
  * "~backup"/"~restore" use and that survives an uninstall.
  *
  * Lifted out of MainActivity to mirror the ConfigStore split — the Activity keeps the parts
@@ -25,7 +25,7 @@ import java.io.InputStream
  *
  * Everything Android-specific is injected so the class names no framework singleton:
  *   [resolver] the app's ContentResolver
- *   [subDir]   the sub-folder of Downloads to write into (e.g. "KolibriChopper")
+ *   [subDir]   the sub-folder of Downloads to write into (e.g. "Sigil")
  *   [log]      android.util.Log in the app, a collector in a test — this class never
  *              throws, so the log IS its error channel.
  */
@@ -44,10 +44,10 @@ internal class BackupStore(
      * permission: writing into the Downloads collection is always allowed, and an app may
      * always rewrite what it wrote itself.
      *
-     * Temp-write then publish, the same shape ConfigStore uses for chopper.json and for the
+     * Temp-write then publish, the same shape ConfigStore uses for sigil.json and for the
      * same reason. Opening the live backup with "wt" truncates it AT OPEN, so a write that
      * then failed — ENOSPC, or the OS reaping a backgrounded HOME app mid-write — used to
-     * leave a torso where the backup had been. Unlike chopper.json in filesDir this file has
+     * leave a torso where the backup had been. Unlike sigil.json in filesDir this file has
      * no .bak beside it: it is the only off-device copy, so it must never be destroyed before
      * its replacement is complete on disk.
      *
@@ -164,7 +164,7 @@ internal class BackupStore(
     }
 
     companion object {
-        /** Cap for a restore read. A chopper.json is small text (keys, names, tags); anything
+        /** Cap for a restore read. A sigil.json is small text (keys, names, tags); anything
          *  larger is not a real config, so refuse it rather than risk an OOM on a hostile or
          *  huge file — the write path is bounded by our own config, only reads are exposed. */
         private const val MAX_RESTORE_BYTES = 8 * 1024 * 1024 // 8 MiB

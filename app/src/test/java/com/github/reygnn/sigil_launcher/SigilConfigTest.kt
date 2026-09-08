@@ -1,4 +1,4 @@
-package com.github.reygnn.kolibri_chopper
+package com.github.reygnn.sigil_launcher
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * JVM unit tests for [ChopperConfig.snapshot]. Plain JUnit4, no Robolectric: the class
+ * JVM unit tests for [SigilConfig.snapshot]. Plain JUnit4, no Robolectric: the class
  * holds no framework types, only collections.
  *
  * These exist for ONE invariant, and it is a load-bearing one. snapshot() hands a copy to
@@ -17,9 +17,9 @@ import org.junit.Test
  * copying the outer map alone still leaves the inner MutableLists aliased, which is
  * exactly the "simplification" a future reader is most likely to reach for.
  */
-class ChopperConfigTest {
+class SigilConfigTest {
 
-    private fun populated() = ChopperConfig(
+    private fun populated() = SigilConfig(
         hidden = linkedSetOf("h/1", "h/2"),
         favorites = linkedSetOf("f/1", "f/2", "f/3"),
         names = linkedMapOf("f/1" to "Custom"),
@@ -102,7 +102,7 @@ class ChopperConfigTest {
      *  the members but lost the order would reorder the user's home screen. */
     @Test
     fun `favorites keep their order across a snapshot`() {
-        val cfg = ChopperConfig(favorites = linkedSetOf("z/1", "a/1", "m/1"))
+        val cfg = SigilConfig(favorites = linkedSetOf("z/1", "a/1", "m/1"))
 
         assertEquals(listOf("z/1", "a/1", "m/1"), cfg.snapshot().favorites.toList())
     }
@@ -120,7 +120,7 @@ class ChopperConfigTest {
 
     @Test
     fun `an empty config snapshots to an empty config`() {
-        val snap = ChopperConfig().snapshot()
+        val snap = SigilConfig().snapshot()
 
         assertTrue(snap.hidden.isEmpty())
         assertTrue(snap.favorites.isEmpty())

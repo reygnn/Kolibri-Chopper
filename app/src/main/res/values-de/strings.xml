@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- app_name stays "Chopper" (brand) — no override, falls back to default. -->
+    <!-- app_name is "Sigil Launcher" (brand) — no -de override, falls back to default. -->
     <string name="hint_search">&gt; suche</string>
     <string name="clear_prompt">Eingabe löschen</string>
     <string name="hint_rename_name">Name</string>
@@ -11,10 +11,10 @@
     <!-- Einmal-Befehle mit "~". %1$s in toast_backup_ok ist der Dateiname. -->
     <string name="toast_saved">Config auf Disk geschrieben</string>
     <string name="toast_save_failed">Speichern fehlgeschlagen — die Config wurde NICHT geschrieben</string>
-    <string name="toast_backup_ok">Backup: Download/KolibriChopper/%1$s</string>
+    <string name="toast_backup_ok">Backup: Download/Sigil/%1$s</string>
     <string name="toast_backup_failed">Backup fehlgeschlagen — es wurde nichts geschrieben</string>
     <string name="toast_restore_ok">Config wiederhergestellt</string>
-    <string name="toast_restore_failed">Wiederherstellung fehlgeschlagen — das Backup ist keine lesbare chopper.json. Es wurde nichts geändert.</string>
+    <string name="toast_restore_failed">Wiederherstellung fehlgeschlagen — das Backup ist keine lesbare sigil.json. Es wurde nichts geändert.</string>
     <string name="toast_restore_none">Kein Backup gefunden — erst ~backup ausführen, oder ~restore-saf zum Auswählen</string>
     <string name="toast_restore_no_picker">Kein Dateimanager auf diesem Gerät</string>
     <!-- Gesprochene Zeilenbeschreibung für die Bearbeitungsmodi. %1$s = App-Name. -->

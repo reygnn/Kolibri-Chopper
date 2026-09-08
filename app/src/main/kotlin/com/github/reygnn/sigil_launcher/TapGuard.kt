@@ -1,4 +1,4 @@
-package com.github.reygnn.kolibri_chopper
+package com.github.reygnn.sigil_launcher
 
 /**
  * The pure staleness test behind the item-click and long-press guards, lifted out of

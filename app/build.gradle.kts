@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.github.reygnn.kolibri_chopper"
+    namespace = "com.github.reygnn.sigil_launcher"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.github.reygnn.kolibri_chopper"
+        applicationId = "com.github.reygnn.sigil_launcher"
         minSdk = 36                 // Android 16 only — no compat shims
         targetSdk = 36
         versionCode = 34
@@ -56,7 +56,7 @@ android {
     }
 
     // Every buildFeature stays OFF (BuildConfig, Compose, viewBinding, …).
-    // The Chopper has no generated code and no resource-backed binding.
+    // Sigil Launcher has no generated code and no resource-backed binding.
 }
 
 // No PRODUCTION dependencies — that is the feature; the release APK is Kotlin

@@ -2,7 +2,7 @@
 
 ## Android Launcher Review
 
-### Chopper
+### Sigil Launcher
 
 **Reviewed by:** Bishop, Executive Officer, Artificial Launcher
 
@@ -14,7 +14,7 @@
 - Single-file architecture — the whole launcher is one `MainActivity.kt`
 - Zero third-party dependencies (Kotlin stdlib only)
 - No AndroidX, no DI, no framework overhead — platform widgets only
-- Atomic, self-healing state: `chopper.json`, mirrored to a recoverable `.bak`
+- Atomic, self-healing state: `sigil.json`, mirrored to a recoverable `.bak`
 - Reduced to the irreducible
 
 **Cons:**

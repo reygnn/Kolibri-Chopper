@@ -1,4 +1,4 @@
-package com.github.reygnn.kolibri_chopper
+package com.github.reygnn.sigil_launcher
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -7,7 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * JVM round-trip tests for the chopper.json (de)serialization. These run on the
+ * JVM round-trip tests for the sigil.json (de)serialization. These run on the
  * plain JVM because the REAL org.json is on the test classpath (see the json
  * testImplementation) — the app's android.jar org.json is only a throwing stub.
  */
@@ -18,7 +18,7 @@ class ConfigJsonTest {
         favorites: List<String> = emptyList(),
         names: Map<String, String> = emptyMap(),
         tags: Map<String, List<String>> = emptyMap(),
-    ) = ChopperConfig().apply {
+    ) = SigilConfig().apply {
         this.hidden += hidden
         this.favorites += favorites
         this.names.putAll(names)
@@ -40,7 +40,7 @@ class ConfigJsonTest {
     }
 
     @Test fun `round-trips an empty config`() {
-        val parsed = ConfigJson.parse(ConfigJson.serialize(ChopperConfig()))!!
+        val parsed = ConfigJson.parse(ConfigJson.serialize(SigilConfig()))!!
         assertTrue(parsed.hidden.isEmpty())
         assertTrue(parsed.favorites.isEmpty())
         assertTrue(parsed.names.isEmpty())
@@ -116,7 +116,7 @@ class ConfigJsonTest {
 
     @Test fun `round-trips names with quotes, backslashes and unicode`() {
         // A custom name must survive serialization intact — otherwise a stray quote
-        // or backslash in a rename could corrupt the whole chopper.json.
+        // or backslash in a rename could corrupt the whole sigil.json.
         val tricky = mapOf(
             "com.a/.A" to "Wörk \"Gmail\"",
             "com.b/.B" to "back\\slash\tand\nnewline",
@@ -181,7 +181,7 @@ class ConfigJsonTest {
      *  about what it lets in. */
     @Test
     fun `a real serialized config round-trips through parseForeign`() {
-        val cfg = ChopperConfig(
+        val cfg = SigilConfig(
             hidden = linkedSetOf("h/1"),
             favorites = linkedSetOf("f/1", "f/2"),
             names = linkedMapOf("f/1" to "Custom"),
